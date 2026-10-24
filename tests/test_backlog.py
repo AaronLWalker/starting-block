@@ -17,7 +17,9 @@ import backlog  # noqa: E402
 
 def remove_tree(path):
     """rmtree that also clears the read-only bits git puts on object files (Windows can't delete those)."""
-    def retry(func, p, _exc):
+    def retry(func, p, exc):
+        if issubclass(exc[0], FileNotFoundError):
+            return  # gone already, e.g. a lock file git's background maintenance just removed
         os.chmod(p, stat.S_IWRITE)
         func(p)
     shutil.rmtree(path, onerror=retry)
@@ -335,7 +337,8 @@ class InstallHookTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
         self.root = Path(self.tmp)
-        for args in (["init", "-q"], ["config", "user.email", "t@example.com"], ["config", "user.name", "T"]):
+        for args in (["init", "-q"], ["config", "user.email", "t@example.com"], ["config", "user.name", "T"],
+                     ["config", "gc.auto", "0"], ["config", "maintenance.auto", "false"]):
             subprocess.run(["git", *args], cwd=self.root, check=True)
         self.dir = self.root / "issues"
         run("--dir", str(self.dir), "init")
