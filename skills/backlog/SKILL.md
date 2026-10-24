@@ -15,6 +15,9 @@ sb-backlog init                      # create issues/ and its README (convention
 sb-backlog list                      # open issues, P1 first; --status all|closed, --priority, --area, --json
 sb-backlog new --title "..." --priority P2 --area api   # create from the template, update the index
 sb-backlog close 7 --resolution "Fixed in #123"         # status, closed date, Resolution, index
+sb-backlog reopen 7                  # status open, drop closed:, Resolution becomes Earlier resolution (date)
+sb-backlog set 7 priority=P1 owner=sam                  # frontmatter fields (`key=` removes one), index
+sb-backlog install-hook              # copy the script to scripts/, run check from .githooks/pre-commit
 sb-backlog index                     # rewrite the README index table from the files
 sb-backlog check                     # fail on malformed files or a stale index; --strict fails on warnings too
 ```

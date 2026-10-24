@@ -6,10 +6,15 @@
   next                 print the next free issue number
   new                  create an issue from the template and add it to the index
   close N              mark issue N closed, optionally add a Resolution
+  reopen N             mark issue N open again; its Resolution becomes an Earlier resolution
+  set N key=value ...  set frontmatter fields (`key=` removes one) and update the index
   index                rewrite the README's index table from the issue files
   check                fail if any issue file or the index is malformed or out of step
+  install-hook         copy this script into the repo's scripts/ and run `check` from
+                       .githooks/pre-commit (--with-secret-scan adds secret_scan.py --staged)
 
-Each issue is `NNN-short-slug.md` with a frontmatter block:
+Each issue is `NNN-short-slug.md` with a frontmatter block, one `key: value` per line
+(lists are comma-separated; YAML lists and indented lines are rejected):
 
   ---
   status: open            # open | closed
@@ -26,6 +31,13 @@ followed by sections such as Problem, Proposed fix, Done when, Progress, Resolut
 A section whose heading starts with "Needs" (e.g. "## Needs the account holder")
 holds steps only a person can do; it stops blocking once every step is ticked (`- [x]`).
 
+An optional `.backlog.toml` in the backlog directory changes the vocabulary
+(read with tomllib, so it needs Python 3.11+):
+
+  statuses = ["open", "in-progress", "closed"]   # must include "open" and "closed"
+  priorities = ["P0", "P1", "P2", "P3"]          # highest first
+  done_sections = ["Done when", "Acceptance"]    # heading prefixes that count as Done when
+
 Standard library only. The backlog directory is --dir, else $BACKLOG_DIR, else
 `issues/` (or an existing `backlog/`) at the git root.
 """
@@ -35,18 +47,29 @@ import datetime as dt
 import json
 import os
 import re
+import stat
 import subprocess
 import sys
 from pathlib import Path
 
+try:
+    import tomllib
+except ImportError:  # Python 3.9 and 3.10
+    tomllib = None
+
 STATUSES = ("open", "closed")
 PRIORITIES = ("P1", "P2", "P3")
+DONE_SECTIONS = ("Done when", "Close when", "Acceptance")
+CONFIG_FILE = ".backlog.toml"
 REQUIRED = ("status", "priority", "opened")
 FILE_RE = re.compile(r"^(\d{3,})-([a-z0-9]+(?:-[a-z0-9]+)*)\.md$")
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
-DONE_RE = re.compile(r"^(done when|close when|acceptance( criteria)?)\b", re.I)
+KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*$")
+WORD_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
 TABLE_HEAD = "| # | Priority | Issue |"
 TABLE_RULE = "|---|---|---|"
+HOOK_START = "# >>> starting-block backlog checks"
+HOOK_END = "# <<< starting-block backlog checks"
 
 README_TEMPLATE = """# Issues
 
@@ -88,9 +111,10 @@ priority: {priority}
 
 
 class Issue:
-    def __init__(self, path):
+    def __init__(self, path, done=None):
         self.path = path
         self.file = path.name
+        self.done_re = done or DONE_RE
         m = FILE_RE.match(path.name)
         self.number = m.group(1) if m else None
         self.text = path.read_text(encoding="utf-8")
@@ -139,7 +163,7 @@ class Issue:
 
     @property
     def has_done_when(self):
-        return any(DONE_RE.match(s) for s in self.sections)
+        return any(self.done_re.match(s) for s in self.sections)
 
     def to_dict(self, by_number):
         open_deps = [d for d in self.depends if d in by_number and by_number[d].status != "closed"]
@@ -164,22 +188,79 @@ def split_list(value):
     return [v.strip() for v in re.split(r"[,\s]+", value.strip("[] ")) if v.strip()]
 
 
+def done_re(prefixes):
+    """Match a section heading that starts with one of `prefixes` (any case) as a whole word."""
+    return re.compile(r"^(?:{})(?!\w)".format("|".join(re.escape(p) for p in prefixes)), re.I)
+
+
+DONE_RE = done_re(DONE_SECTIONS)
+
+
 def parse_frontmatter(text):
+    """One `key: value` per line. Indented lines and YAML lists are reported, not guessed at."""
     lines = text.splitlines()
     if not lines or lines[0].strip() != "---":
         return {}, text, "no frontmatter (file must start with ---)"
     meta = {}
+    bare = None  # (line number, key) of the previous line when it was `key:` with no value
     for i, line in enumerate(lines[1:], start=1):
         if line.strip() == "---":
             return meta, "\n".join(lines[i + 1:]), None
         if not line.strip() or line.lstrip().startswith("#"):
             continue
+        if line[0].isspace() or re.match(r"-(\s|$)", line):
+            if bare:
+                return meta, "", ("frontmatter line {}: `{}:` is followed by indented or `- ` lines (YAML lists "
+                                  "and nested values aren't supported); write `{}: a, b` on one line"
+                                  ).format(bare[0], bare[1], bare[1])
+            if line[0].isspace():
+                return meta, "", ("frontmatter line {} is indented (continuation lines aren't supported); "
+                                  "put each `key: value` on one line").format(i + 1)
+            return meta, "", "frontmatter line {} is a YAML list item; write lists as `key: a, b`".format(i + 1)
         key, sep, value = line.partition(":")
-        if not sep:
+        key = key.strip()
+        if not sep or not key or re.search(r"\s", key):
             return meta, "", "frontmatter line {} isn't `key: value`".format(i + 1)
         value = re.sub(r"\s+#.*$", "", value).strip()
-        meta[key.strip()] = value
+        meta[key] = value
+        bare = (i + 1, key) if re.match(r"^([|>][+-]?)?$", value) else None
     return meta, "", "frontmatter is never closed with ---"
+
+
+def load_config(directory):
+    """Read `.backlog.toml` from the backlog directory, with the defaults for anything it leaves out."""
+    config = {"statuses": STATUSES, "priorities": PRIORITIES, "done_sections": DONE_SECTIONS}
+    path = Path(directory) / CONFIG_FILE
+    if path.is_file():
+        if tomllib is None:
+            sys.exit("{} needs Python 3.11 or later (for tomllib); this is Python {}.{}. "
+                     "Use a newer Python or remove the file.".format(path, *sys.version_info[:2]))
+        try:
+            with open(str(path), "rb") as f:
+                data = tomllib.load(f)
+        except (tomllib.TOMLDecodeError, UnicodeDecodeError) as e:
+            sys.exit("{}: {}".format(path, e))
+        for key, value in data.items():
+            if key not in config:
+                sys.exit("{}: unknown key `{}` (expected {})".format(path, key, ", ".join(sorted(config))))
+            if not isinstance(value, list) or not value \
+                    or not all(isinstance(v, str) and v.strip() for v in value):
+                sys.exit("{}: `{}` must be a non-empty list of strings".format(path, key))
+            value = tuple(v.strip() for v in value)
+            if len(set(value)) != len(value):
+                sys.exit("{}: `{}` lists a value twice".format(path, key))
+            if key != "done_sections":
+                bad = [v for v in value if not WORD_RE.match(v) or v == "all"]
+                if bad:
+                    sys.exit("{}: `{}` value `{}` must be one word (letters, digits, `-`, `_`, `.`) "
+                             "other than `all`".format(path, key, bad[0]))
+            config[key] = value
+        missing = [s for s in ("open", "closed") if s not in config["statuses"]]
+        if missing:
+            sys.exit("{}: `statuses` must include {}".format(
+                path, " and ".join('"{}"'.format(s) for s in missing)))
+    config["done_re"] = done_re(config["done_sections"])
+    return config
 
 
 def write_file(path, text):
@@ -197,13 +278,19 @@ def utf8_output():
             pass
 
 
-def git_root():
+def git(args, cwd=None):
+    """Run git and return its stripped output, or None if git is missing or the command fails."""
     try:
-        out = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True,
-                             encoding="utf-8", errors="replace", check=True)
-        return Path(out.stdout.strip())
+        out = subprocess.run(["git"] + args, cwd=None if cwd is None else str(cwd), capture_output=True,
+                             text=True, encoding="utf-8", errors="replace", check=True)
+        return out.stdout.strip()
     except (OSError, subprocess.CalledProcessError):
-        return Path.cwd()
+        return None
+
+
+def git_root():
+    root = git(["rev-parse", "--show-toplevel"])
+    return Path(root) if root else Path.cwd()
 
 
 def backlog_dir(arg):
@@ -218,14 +305,15 @@ def backlog_dir(arg):
     return root / "issues"
 
 
-def load(directory):
+def load(directory, config=None):
+    config = config or load_config(directory)
     issues = []
     stray = []
     for p in sorted(directory.glob("*.md")):
         if p.name.lower() == "readme.md":
             continue
         if FILE_RE.match(p.name):
-            issues.append(Issue(p))
+            issues.append(Issue(p, config["done_re"]))
         elif re.match(r"^\d", p.name):
             stray.append(p.name)
     return issues, stray
@@ -291,10 +379,53 @@ def write_index(directory, issues):
     return False
 
 
+def find_issue(directory, issues, number):
+    """The one issue numbered `number`, with readable frontmatter, or exit with the reason."""
+    if not number.isdigit():
+        sys.exit("`{}` isn't an issue number".format(number))
+    num = number.zfill(3)
+    match = [i for i in issues if i.number == num]
+    if not match:
+        sys.exit("No issue {} in {}".format(num, directory))
+    if len(match) > 1:
+        sys.exit("Number {} is used by {}; renumber one first.".format(num, ", ".join(i.file for i in match)))
+    if match[0].meta_error:
+        sys.exit("{}: {}. Fix the frontmatter first.".format(match[0].file, match[0].meta_error))
+    return match[0]
+
+
+def valid_date(value):
+    if not DATE_RE.match(value):
+        return False
+    try:
+        dt.date(*map(int, value.split("-")))
+    except ValueError:
+        return False
+    return True
+
+
+def check_date(flag, value):
+    if not valid_date(value):
+        sys.exit("{} must be a date as YYYY-MM-DD, not `{}`".format(flag, value))
+    return value
+
+
+def meta_end(lines):
+    return next(i for i in range(1, len(lines)) if lines[i].strip() == "---")
+
+
+def remove_meta(text, keys):
+    """Delete the frontmatter lines for `keys`."""
+    lines = text.splitlines()
+    end = meta_end(lines)
+    lines = lines[:1] + [l for l in lines[1:end] if l.split(":", 1)[0].strip() not in keys] + lines[end:]
+    return "\n".join(lines) + ("\n" if text.endswith("\n") else "")
+
+
 def set_meta(text, updates):
     """Set frontmatter keys in place, keeping order; new keys go right after `status`."""
     lines = text.splitlines()
-    end = lines.index("---", 1)
+    end = meta_end(lines)
     for key, value in updates.items():
         for i in range(1, end):
             if lines[i].split(":", 1)[0].strip() == key:
@@ -328,13 +459,19 @@ def cmd_init(args):
 def cmd_list(args):
     d = backlog_dir(args.dir)
     require_dir(d)
-    issues, _ = load(d)
+    config = load_config(d)
+    prios = config["priorities"]
+    if args.status != "all" and args.status not in config["statuses"]:
+        sys.exit("--status must be one of " + ", ".join(config["statuses"] + ("all",)))
+    if args.priority and args.priority not in prios:
+        sys.exit("--priority must be one of " + ", ".join(prios))
+    issues, _ = load(d, config)
     by_number = {i.number: i for i in issues}
     sel = [i for i in issues
            if (args.status == "all" or i.status == args.status)
            and (not args.priority or i.priority == args.priority)
            and (not args.area or args.area in i.areas)]
-    sel.sort(key=lambda i: (PRIORITIES.index(i.priority) if i.priority in PRIORITIES else 9, int(i.number)))
+    sel.sort(key=lambda i: (prios.index(i.priority) if i.priority in prios else len(prios), int(i.number)))
     if args.json:
         print(json.dumps([i.to_dict(by_number) for i in sel], indent=2))
         return 0
@@ -362,18 +499,22 @@ def cmd_next(args):
 def cmd_new(args):
     d = backlog_dir(args.dir)
     require_dir(d)
-    if args.priority not in PRIORITIES:
-        sys.exit("--priority must be one of " + ", ".join(PRIORITIES))
-    issues, _ = load(d)
+    config = load_config(d)
+    prios = config["priorities"]
+    priority = args.priority or prios[(len(prios) - 1) // 2]
+    if priority not in prios:
+        sys.exit("--priority must be one of " + ", ".join(prios))
+    opened = check_date("--date", args.date) if args.date else today()
+    issues, _ = load(d, config)
     num = next_number(issues)
     path = d / "{}-{}.md".format(num, args.slug or slugify(args.title))
     area = "area: {}\n".format(args.area) if args.area else ""
     write_file(path, ISSUE_TEMPLATE.format(
-        priority=args.priority, area=area, opened=args.date or today(), title=args.title,
+        priority=priority, area=area, opened=opened, title=args.title,
         problem=args.problem or "", done=args.done or ""))
     if args.depends:
         write_file(path, set_meta(path.read_text(encoding="utf-8"), {"depends": args.depends}))
-    issues, _ = load(d)
+    issues, _ = load(d, config)
     write_index(d, issues)
     print(path)
     return 0
@@ -383,18 +524,100 @@ def cmd_close(args):
     d = backlog_dir(args.dir)
     require_dir(d)
     issues, _ = load(d)
-    num = args.number.zfill(3)
-    match = [i for i in issues if i.number == num]
-    if not match:
-        sys.exit("No issue {} in {}".format(num, d))
-    issue = match[0]
-    text = set_meta(issue.text, {"status": "closed", "closed": args.date or today()})
+    issue = find_issue(d, issues, args.number)
+    closed = check_date("--date", args.date) if args.date else today()
+    text = set_meta(issue.text, {"status": "closed", "closed": closed})
     if args.resolution:
         if "## Resolution" in text:
-            sys.exit("Issue {} already has a Resolution section; edit it by hand.".format(num))
+            sys.exit("Issue {} already has a Resolution section; edit it by hand.".format(issue.number))
         text = text.rstrip("\n") + "\n\n## Resolution\n" + args.resolution.strip() + "\n"
     write_file(issue.path, text)
     issues, _ = load(d)
+    write_index(d, issues)
+    print(issue.path)
+    return 0
+
+
+def cmd_reopen(args):
+    d = backlog_dir(args.dir)
+    require_dir(d)
+    issues, _ = load(d)
+    issue = find_issue(d, issues, args.number)
+    if issue.status != "closed":
+        sys.exit("Issue {} isn't closed (status: {}).".format(issue.number, issue.status or "none"))
+    date = check_date("--date", args.date) if args.date else today()
+    text = remove_meta(set_meta(issue.text, {"status": "open"}), ("closed",))
+    lines = text.splitlines()
+    for k in range(meta_end(lines) + 1, len(lines)):
+        if lines[k].startswith("## ") and lines[k][3:].strip() == "Resolution":
+            lines[k] = "## Earlier resolution ({})".format(date)
+    write_file(issue.path, "\n".join(lines) + "\n")
+    issues, _ = load(d)
+    write_index(d, issues)
+    print(issue.path)
+    return 0
+
+
+def set_error(issue, key, value, config, by_number):
+    """Why `key=value` can't be set on `issue` (an empty value removes the key), or None."""
+    n = issue.number
+    if key == "title":
+        return "the title is the `# ` line under the frontmatter; edit it there"
+    if key in REQUIRED and not value:
+        return "`{}:` is required, so it can't be removed".format(key)
+    if key == "status":
+        if value == "closed" or issue.status == "closed":
+            return ("change status with `close {n}` or `reopen {n}`: they also set the `closed:` date "
+                    "and the Resolution section").format(n=n)
+        if value not in config["statuses"]:
+            return "status `{}` isn't one of {}".format(value, ", ".join(config["statuses"]))
+    if key == "priority" and value not in config["priorities"]:
+        return "priority `{}` isn't one of {}".format(value, ", ".join(config["priorities"]))
+    if key in ("opened", "closed") and value and not valid_date(value):
+        return "`{}` must be a date as YYYY-MM-DD, not `{}`".format(key, value)
+    if key == "closed" and value and issue.status != "closed":
+        return "only a closed issue has a `closed:` date; use `close {}`".format(n)
+    if key == "closed" and not value and issue.status == "closed":
+        return "a closed issue needs its `closed:` date; use `reopen {}` to reopen it".format(n)
+    if key == "depends":
+        for dep in split_list(value):
+            if not dep.isdigit():
+                return "depends `{}` isn't an issue number".format(dep)
+            if dep.zfill(3) == n:
+                return "an issue can't depend on itself"
+            if dep.zfill(3) not in by_number:
+                return "depends on {}, which doesn't exist".format(dep.zfill(3))
+    return None
+
+
+def cmd_set(args):
+    d = backlog_dir(args.dir)
+    require_dir(d)
+    config = load_config(d)
+    issues, _ = load(d, config)
+    issue = find_issue(d, issues, args.number)
+    by_number = {i.number: i for i in issues}
+    updates, removals = {}, set()
+    for pair in args.pairs:
+        key, sep, value = pair.partition("=")
+        key, value = key.strip(), value.strip()
+        if not sep or not KEY_RE.match(key):
+            sys.exit("`{}` isn't key=value (keys are letters, digits, `-` and `_`)".format(pair))
+        if "\n" in value or "\r" in value or re.search(r"\s#", value):
+            sys.exit("`{}`: the value must be one line, without ` #` (that starts a comment)".format(key))
+        error = set_error(issue, key, value, config, by_number)
+        if error:
+            sys.exit("Issue {}: {}".format(issue.number, error))
+        updates.pop(key, None)
+        removals.discard(key)
+        if value:
+            updates[key] = value
+        else:
+            removals.add(key)
+    text = remove_meta(set_meta(issue.text, updates), removals)
+    if text != issue.text:
+        write_file(issue.path, text)
+    issues, _ = load(d, config)
     write_index(d, issues)
     print(issue.path)
     return 0
@@ -409,10 +632,12 @@ def cmd_index(args):
     return 0
 
 
-def check(directory):
+def check(directory, config=None):
     """Return (errors, warnings) as lists of strings."""
+    config = config or load_config(directory)
+    statuses, prios = config["statuses"], config["priorities"]
     errors, warnings = [], []
-    issues, stray = load(directory)
+    issues, stray = load(directory, config)
     for name in stray:
         errors.append("{}: filename should be NNN-lowercase-slug.md".format(name))
     seen = {}
@@ -430,10 +655,10 @@ def check(directory):
         for key in REQUIRED:
             if not i.meta.get(key):
                 errors.append("{}: missing `{}:`".format(where, key))
-        if i.status and i.status not in STATUSES:
-            errors.append("{}: status `{}` isn't one of {}".format(where, i.status, ", ".join(STATUSES)))
-        if i.priority and i.priority not in PRIORITIES:
-            errors.append("{}: priority `{}` isn't one of {}".format(where, i.priority, ", ".join(PRIORITIES)))
+        if i.status and i.status not in statuses:
+            errors.append("{}: status `{}` isn't one of {}".format(where, i.status, ", ".join(statuses)))
+        if i.priority and i.priority not in prios:
+            errors.append("{}: priority `{}` isn't one of {}".format(where, i.priority, ", ".join(prios)))
         for key in ("opened", "closed"):
             v = i.meta.get(key)
             if v and not DATE_RE.match(v):
@@ -447,11 +672,12 @@ def check(directory):
                 errors.append("{}: closed before it was opened".format(where))
             if "Resolution" not in i.sections:
                 warnings.append("{}: closed without a `## Resolution`".format(where))
-        if i.status == "open":
+        elif i.status in statuses:
             if i.meta.get("closed"):
-                errors.append("{}: open, but has a `closed:` date".format(where))
+                errors.append("{}: {}, but has a `closed:` date".format(where, i.status))
             if not i.has_done_when:
-                warnings.append("{}: open with no `## Done when` (refine it before executing)".format(where))
+                warnings.append("{}: {} with no `## Done when` (refine it before executing)".format(
+                    where, i.status))
         for dep in i.depends:
             if dep not in by_number:
                 errors.append("{}: depends on {}, which doesn't exist".format(where, dep))
@@ -490,6 +716,120 @@ def cmd_check(args):
     return 1 if errors or (args.strict and warnings) else 0
 
 
+def hook_block(rel, secret_scan):
+    """The pre-commit lines install-hook manages, between its two marker comments."""
+    lines = [
+        HOOK_START + " (written by `backlog.py install-hook`; re-run it to change them) >>>",
+        'for PY in python3 python "py -3"; do $PY -c "" >/dev/null 2>&1 && break; done  # Windows: skip Store stub',
+        'if ! $PY -c "" >/dev/null 2>&1; then',
+        '    echo "pre-commit: no Python found (python3, python or py -3)." >&2',
+        '    echo "(To commit anyway: git commit --no-verify)" >&2',
+        "    exit 1",
+        "fi",
+        "if git diff --cached --name-only | grep -q '^{}/'; then".format(rel.replace(".", "\\.")),
+        "    if ! $PY scripts/backlog.py --dir {} check; then".format(rel),
+        "        echo",
+        '        echo "Fix the backlog problems above, then commit again."',
+        '        echo "(To commit anyway: git commit --no-verify)"',
+        "        exit 1",
+        "    fi",
+        "fi",
+    ]
+    if secret_scan:
+        lines += [
+            "if ! $PY scripts/secret_scan.py --staged; then",
+            "    echo",
+            '    echo "Unstage the secret above, or mark a false positive with: secret-scan: ignore"',
+            '    echo "(To commit anyway: git commit --no-verify)"',
+            "    exit 1",
+            "fi",
+        ]
+    return lines + [HOOK_END + " <<<"]
+
+
+def merge_hook(existing, block):
+    """Hook text with `block` added (after the shebang) or replacing the marked lines; None if not sh."""
+    if not existing or not existing.strip():
+        head = ["#!/bin/sh", "# Enable once per clone:  git config core.hooksPath .githooks"]
+        return "\n".join(head + block) + "\n"
+    lines = existing.splitlines()
+    start = next((k for k, l in enumerate(lines) if l.startswith(HOOK_START)), None)
+    if start is not None:
+        end = next((k for k in range(start, len(lines)) if lines[k].startswith(HOOK_END)), None)
+        if end is None:
+            sys.exit("The hook has a `{}` line but no `{}` line; fix it by hand.".format(HOOK_START, HOOK_END))
+        lines[start:end + 1] = block
+    elif lines[0].startswith("#!"):
+        if not re.search(r"\b(sh|bash|dash|ksh|zsh)\b", lines[0]):
+            return None
+        lines[1:1] = block + [""]
+    else:
+        lines[0:0] = ["#!/bin/sh"] + block + [""]
+    return "\n".join(lines) + "\n"
+
+
+def same_text(a, b):
+    return a.replace("\r\n", "\n") == b.replace("\r\n", "\n")
+
+
+def cmd_install_hook(args):
+    d = backlog_dir(args.dir)
+    require_dir(d)
+    top = git(["rev-parse", "--show-toplevel"], d)
+    if not top:
+        sys.exit("{} isn't inside a git repository.".format(d))
+    root = Path(top)
+    rel = (git(["rev-parse", "--show-prefix"], d) or "").strip("/")
+    if not rel or not re.match(r"^[A-Za-z0-9_.][A-Za-z0-9_./-]*$", rel):
+        sys.exit("install-hook needs the backlog in a subdirectory of the repo whose path is letters, digits, "
+                 "`.`, `_`, `-` and `/` (got `{}`).".format(rel or "."))
+    here = Path(__file__).resolve().parent
+    names = ["backlog.py"] + (["secret_scan.py"] if args.with_secret_scan else [])
+    copies = []
+    for name in names:
+        src = here / name
+        if not src.is_file():
+            sys.exit("{} isn't next to backlog.py in {}.".format(name, here))
+        text = src.read_text(encoding="utf-8")
+        dest = root / "scripts" / name
+        if dest.exists():
+            if same_text(dest.read_text(encoding="utf-8", errors="replace"), text):
+                print("Already current: scripts/{}".format(name))
+                continue
+            if not args.force:
+                sys.exit("scripts/{} already exists and differs from this version; "
+                         "pass --force to replace it.".format(name))
+        copies.append((dest, text))
+    hook = root / ".githooks" / "pre-commit"
+    existing = hook.read_text(encoding="utf-8") if hook.exists() else None
+    new = merge_hook(existing, hook_block(rel, args.with_secret_scan))
+    if new is None:
+        sys.exit(".githooks/pre-commit isn't a shell script, so install-hook can't extend it. Add these lines "
+                 "to it, or run them from it:\n" + "\n".join(hook_block(rel, args.with_secret_scan)))
+    for dest, text in copies:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        write_file(dest, text)
+        print("Copied {} to scripts/{}".format(dest.name, dest.name))
+    if existing is not None and same_text(existing, new):
+        print("Already current: .githooks/pre-commit")
+    else:
+        hook.parent.mkdir(parents=True, exist_ok=True)
+        write_file(hook, new)
+        print("{} .githooks/pre-commit".format("Updated" if existing else "Wrote"))
+    os.chmod(str(hook), os.stat(str(hook)).st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    hooks_path = git(["config", "--get", "core.hooksPath"], root)
+    ours = (".githooks", "./.githooks", (root / ".githooks").as_posix())
+    if not hooks_path:
+        print("Enable it once per clone:  git config core.hooksPath .githooks")
+    elif hooks_path.replace("\\", "/").rstrip("/") in ours:
+        print("core.hooksPath is already .githooks.")
+    else:
+        print("core.hooksPath is set to `{}`, so git won't run .githooks/pre-commit. Left as is: point it at "
+              ".githooks, or call .githooks/pre-commit from the hook there.".format(hooks_path))
+    print("On Windows, where chmod doesn't reach git, commit it with:  git add --chmod=+x .githooks/pre-commit")
+    return 0
+
+
 def main(argv=None):
     utf8_output()
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
@@ -499,8 +839,8 @@ def main(argv=None):
     sub.add_parser("init", help="create the backlog directory and README")
 
     p = sub.add_parser("list", help="list issues")
-    p.add_argument("--status", default="open", choices=STATUSES + ("all",))
-    p.add_argument("--priority", choices=PRIORITIES)
+    p.add_argument("--status", default="open", help="a status, or all (default: open)")
+    p.add_argument("--priority")
     p.add_argument("--area")
     p.add_argument("--json", action="store_true")
 
@@ -508,7 +848,7 @@ def main(argv=None):
 
     p = sub.add_parser("new", help="create an issue")
     p.add_argument("--title", required=True)
-    p.add_argument("--priority", default="P2")
+    p.add_argument("--priority", help="default: the middle priority (P2)")
     p.add_argument("--area", help="comma-separated areas")
     p.add_argument("--depends", help="comma-separated issue numbers")
     p.add_argument("--slug", help="filename slug (default: from the title)")
@@ -521,14 +861,27 @@ def main(argv=None):
     p.add_argument("--resolution", help="text for a new Resolution section")
     p.add_argument("--date", help="closed date (default: today)")
 
+    p = sub.add_parser("reopen", help="reopen a closed issue")
+    p.add_argument("number")
+    p.add_argument("--date", help="date for the Earlier resolution heading (default: today)")
+
+    p = sub.add_parser("set", help="set frontmatter fields")
+    p.add_argument("number")
+    p.add_argument("pairs", nargs="+", metavar="key=value", help="`key=` with no value removes the key")
+
     sub.add_parser("index", help="rewrite the README index table")
 
     p = sub.add_parser("check", help="validate issue files and the index")
     p.add_argument("--strict", action="store_true", help="treat warnings as errors")
 
+    p = sub.add_parser("install-hook", help="run `check` from .githooks/pre-commit")
+    p.add_argument("--with-secret-scan", action="store_true", help="also run secret_scan.py --staged")
+    p.add_argument("--force", action="store_true", help="replace a different scripts/backlog.py or secret_scan.py")
+
     args = ap.parse_args(argv)
     return {"init": cmd_init, "list": cmd_list, "next": cmd_next, "new": cmd_new, "close": cmd_close,
-            "index": cmd_index, "check": cmd_check}[args.cmd](args)
+            "reopen": cmd_reopen, "set": cmd_set, "index": cmd_index, "check": cmd_check,
+            "install-hook": cmd_install_hook}[args.cmd](args)
 
 
 if __name__ == "__main__":
