@@ -1,0 +1,17 @@
+{
+  "name": "starting-block",
+  "description": "Starting Block: backlog planning, refinement and execution for Claude Code.",
+  "owner": {
+    "name": "Aaron Walker",
+    "url": "https://github.com/AaronLWalker"
+  },
+  "plugins": [
+    {
+      "name": "starting-block",
+      "source": "./",
+      "description": "Plan, refine and execute work from an issue backlog kept in the repo, plus secret scanning and drift checks.",
+      "category": "productivity",
+      "tags": ["backlog", "issues", "planning", "secrets"]
+    }
+  ]
+}

@@ -1,0 +1,6 @@
+schema_version: "1.1"
+name: drift-guard-proposes-check
+description: "Recognize a drift problem and propose a source of truth, a check and a hook."
+tags: [drift-guard]
+context:
+  scaffold_script: scaffold.sh

@@ -1,0 +1,6 @@
+schema_version: "1.1"
+name: refine-vague-issue
+description: "Refine a vague issue whose facts are wrong: correct them, find the cause, add an observable Done when."
+tags: [refine]
+context:
+  scaffold_script: scaffold.sh
