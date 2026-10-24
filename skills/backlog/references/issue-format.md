@@ -50,7 +50,8 @@ A `# Title` line, then the sections that apply, in this order:
 | `## Resolution` | when closed | What fixed it, and the commit hash or pull request; where any leftover went (another issue number). |
 
 `Needs` steps are anything that takes the person's account, money, credentials, physical access, admin
-rights (`sudo`, a production console), their own devices, or a decision that's theirs to make.
+rights (`sudo`, a production console), their own devices, a machine or service the agent's session can't
+reach, or a decision that's theirs to make.
 
 ## Writing it
 
