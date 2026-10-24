@@ -28,11 +28,19 @@ owner: sam            # optional; who's working on it
 ---
 ```
 
+One `key: value` per line. Lists are comma-separated on one line; `check` rejects YAML lists and indented
+lines.
+
 | Priority | Meaning |
 |---|---|
 | **P1** | Fix soon: a real risk (data loss, security, outage) or it blocks other work. |
 | **P2** | Worth doing: a visible defect or a clear improvement. |
 | **P3** | Tidy-up: cleanup, docs, small inconsistencies. |
+
+A repo can change these words in `issues/.backlog.toml`: `statuses` (must include `"open"` and
+`"closed"`), `priorities` (highest first) and `done_sections` (heading prefixes that count as Done when),
+e.g. `priorities = ["P0", "P1", "P2"]`. Keys it leaves out keep the defaults above. Reading it needs
+Python 3.11 or later.
 
 ## Body
 

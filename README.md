@@ -113,7 +113,9 @@ python scripts/backlog.py check            # fail if an issue file is malformed 
 python scripts/secret_scan.py --history    # fail if anything looks like a committed secret
 ```
 
-A CI step, after checking out with `fetch-depth: 0`:
+`sb-backlog install-hook --with-secret-scan` does the copying for you and adds both checks to a
+`.githooks/pre-commit` hook (it keeps anything already there). A CI step, after checking out with
+`fetch-depth: 0`:
 
 ```yaml
 - run: python scripts/backlog.py check && python scripts/secret_scan.py --history
