@@ -12,6 +12,8 @@
 - `backlog.py install-hook [--with-secret-scan]`: copies the scripts into `scripts/` and adds a marked
   block to `.githooks/pre-commit` that runs `check` (and `secret_scan.py --staged`), keeping what's there.
 - `close`, `reopen` and `new` reject a `--date` that isn't YYYY-MM-DD.
+- plan and execute treat work that needs a machine or service the session can't reach (a production host,
+  `sudo`, a live service) as waiting on a person, not ready. New eval: `plan-holds-person-steps`.
 - GitHub Issues as the backlog: `sb-backlog github list` (via `gh api`, REST only) and `github from-json`
   give the same JSON as the file backlog; priority from `P1`–`P3` labels or a `Priority:` body line,
   `Depends on #N` lines, Needs checklists. Skills pick the backend from where the repo tracks work, and close

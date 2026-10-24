@@ -20,8 +20,8 @@ need the person, and say which one and why.
 Stop and report, without starting, if:
 - it has no **Done when** you can run (suggest the `refine` skill);
 - an issue in `depends:` is still open;
-- a `## Needs` checklist has unticked boxes, or the work needs admin rights, credentials or a decision
-  from the person. Never do their steps or work around them.
+- a `## Needs` checklist has unticked boxes, or the work needs admin rights, credentials, a decision, or a
+  machine or service this session can't reach. Never do their steps or work around them.
 
 If the problem is already gone, close the issue with that evidence instead.
 
