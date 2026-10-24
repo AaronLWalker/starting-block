@@ -20,7 +20,8 @@ In Claude Code:
 /plugin install starting-block@starting-block
 ```
 
-You need git and Python 3.9 or later. On Windows, install Python from python.org, which adds the `py`
+It runs in Claude Code (terminal, desktop and IDE) on macOS, Linux and Windows; it isn't built for
+skill uploads to claude.ai. You need git and Python 3.9 or later. On Windows, install Python from python.org, which adds the `py`
 launcher; the plugin finds `python3`, `python` or `py` itself. Update with
 `claude plugin update starting-block@starting-block`; remove with
 `claude plugin uninstall starting-block@starting-block`.
