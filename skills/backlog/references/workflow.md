@@ -40,8 +40,9 @@ To check whether an issue is stale or already fixed, read-only:
   turns out to be already fixed, it closes the issue with that evidence.
 - **plan** and **refine** never close issues on their own. They propose closing (as done or as a
   duplicate) with the evidence, and close only if the user agrees or asked them to groom the backlog.
-- A closed issue that turns out not to be fixed is reopened: set `status: open`, delete `closed:`, and
-  rename `## Resolution` to `## Earlier resolution (YYYY-MM-DD)` so the history stays readable.
+- A closed issue that turns out not to be fixed is reopened with `sb-backlog reopen N`: it sets
+  `status: open`, deletes `closed:`, and renames `## Resolution` to `## Earlier resolution (YYYY-MM-DD)`
+  so the history stays readable.
 
 ## Commits
 

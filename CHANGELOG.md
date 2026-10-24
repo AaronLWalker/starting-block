@@ -13,6 +13,18 @@
   - New rules: Azure storage account keys, GCP service-account key files (reported once, not also as a
     private key), npm, PyPI and Hugging Face tokens, Discord and Telegram bot tokens.
   - Each finding in `--json` output has a `sha256` of its value.
+- `backlog.py reopen N`: sets `status: open`, drops `closed:`, and renames `## Resolution` to
+  `## Earlier resolution (date)`.
+- `backlog.py set N key=value ...`: sets frontmatter fields (`key=` removes one) and re-indexes. Checks
+  priorities and dates; status changes to or from closed go through `close` and `reopen`.
+- `check` reports frontmatter it can't parse (indented lines, YAML lists, `key:` over a nested block)
+  instead of misreading it.
+- Optional `issues/.backlog.toml` sets `statuses`, `priorities` and `done_sections` (Python 3.11+).
+- `backlog.py install-hook [--with-secret-scan]`: copies the scripts into `scripts/` and adds a marked
+  block to `.githooks/pre-commit` that runs `check` (and `secret_scan.py --staged`), keeping what's there.
+- `close`, `reopen` and `new` reject a `--date` that isn't YYYY-MM-DD.
+- plan and execute treat work that needs a machine or service the session can't reach (a production host,
+  `sudo`, a live service) as waiting on a person, not ready. New eval: `plan-holds-person-steps`.
 - GitHub Issues as the backlog: `sb-backlog github list` (via `gh api`, REST only) and `github from-json`
   give the same JSON as the file backlog; priority from `P1`–`P3` labels or a `Priority:` body line,
   `Depends on #N` lines, Needs checklists. Skills pick the backend from where the repo tracks work, and close
