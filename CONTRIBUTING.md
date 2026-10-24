@@ -53,6 +53,9 @@ If you changed a skill, run its evals (they make real model calls):
 claude plugin eval . --tag <skill> --runs 3 --scaffold --trust-plugin --allow-tools Bash Write Edit
 ```
 
+The **Evals** workflow (`.github/workflows/evals.yml`) runs every case weekly and on demand (Actions → Evals →
+Run workflow) once the repo has an `ANTHROPIC_API_KEY` secret; results are attached to the run.
+
 Cases tagged `needs-bash` (backlog, execute, secrets-audit) need `--allow-tools Bash Write Edit`, and Bash in
 evals runs inside Claude Code's sandbox: on Linux that needs `bubblewrap` and `socat`, and the run must not be
 root (as root the sandbox mounts the workspace read-only and every command fails). Without Bash, run the
