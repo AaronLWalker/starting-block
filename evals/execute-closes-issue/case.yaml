@@ -1,0 +1,6 @@
+schema_version: "1.1"
+name: execute-closes-issue
+description: "Work a ready issue: fix, test, commit, close with the commit hash."
+tags: [execute, needs-bash]
+context:
+  scaffold_script: scaffold.sh

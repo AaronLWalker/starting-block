@@ -1,0 +1,6 @@
+schema_version: "1.1"
+name: backlog-opens-issue
+description: "File a new bug in an existing in-repo backlog with evidence and an observable Done when."
+tags: [backlog, needs-bash]
+context:
+  scaffold_script: scaffold.sh
