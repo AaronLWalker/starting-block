@@ -1,0 +1,6 @@
+schema_version: "1.1"
+name: plan-holds-person-steps
+description: "Issues whose steps need the person (sudo, a password, checking a device) are not 'next up' for the agent, even without a Needs section."
+tags: [plan]
+context:
+  scaffold_script: scaffold.sh

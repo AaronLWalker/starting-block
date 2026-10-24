@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- plan and execute treat work that needs a machine or service the session can't reach (a production host,
+  `sudo`, a live service) as waiting on a person, not ready. New eval: `plan-holds-person-steps`.
+
 ## 0.1.0 (2026-10-24)
 
 First release. Extracted from the workflows of a self-hosted media-stack repo.

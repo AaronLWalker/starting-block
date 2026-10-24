@@ -22,10 +22,10 @@ repo (workflow.md, "Is the problem still there?"). Then classify it as one of:
 | State | Meaning | Next action |
 |---|---|---|
 | Done | Already fixed; you found the commit or the evidence | propose closing |
-| Ready | Facts hold, Done when is observable, nothing blocks it | execute |
+| Ready | Facts hold, Done when is observable, nothing blocks it, and you can do every step from this session | execute |
 | Needs refinement | No Done when, vague, or stale facts | refine |
 | Blocked | An issue in `depends` is open | do the blocker first |
-| Needs a person | Any step needs the person: a Needs checklist, or admin rights, credentials or a decision mentioned in the text | ask them |
+| Needs a person | Any step needs the person: a Needs checklist, or admin rights, credentials, a device, a decision, or access to a machine or service this session can't reach | ask them |
 | Duplicate | Another issue covers it | propose merging into the older one |
 
 With more than about 15 open issues, split the checking across parallel subagents, one per area.
