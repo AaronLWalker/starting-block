@@ -88,7 +88,7 @@ def cmd_check(args):
     for e in errors:
         print("error: " + e)
     if errors:
-        print("\nFix the above, then run: python {} build".format(Path(__file__).relative_to(ROOT).as_posix()))
+        print("\nFix the above, then run: python {} build".format(Path(__file__).resolve().relative_to(ROOT).as_posix()))
         return 1
     print("In step: {} entries".format(len(items)))
     return 0
