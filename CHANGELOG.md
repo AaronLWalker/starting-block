@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- GitHub Issues as the backlog: `sb-backlog github list` (via `gh api`, REST only) and `github from-json`
+  give the same JSON as the file backlog; priority from `P1`–`P3` labels or a `Priority:` body line,
+  `Depends on #N` lines, Needs checklists. Skills pick the backend from where the repo tracks work, and close
+  GitHub issues through `Fixes #N`. See `skills/backlog/references/github.md`.
+
 ## 0.1.0 (2026-10-24)
 
 First release. Extracted from the workflows of a self-hosted media-stack repo.

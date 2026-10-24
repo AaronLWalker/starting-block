@@ -8,6 +8,7 @@
   close N              mark issue N closed, optionally add a Resolution
   index                rewrite the README's index table from the issue files
   check                fail if any issue file or the index is malformed or out of step
+  github list          the same listing from GitHub Issues instead (see backlog_github.py)
 
 Each issue is `NNN-short-slug.md` with a frontmatter block:
 
@@ -492,6 +493,11 @@ def cmd_check(args):
 
 def main(argv=None):
     utf8_output()
+    argv = sys.argv[1:] if argv is None else argv
+    if argv[:1] == ["github"]:  # the backlog in GitHub Issues: see backlog_github.py
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import backlog_github
+        return backlog_github.main(argv[1:])
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--dir", help="backlog directory (default: $BACKLOG_DIR, else issues/ at the git root)")
     sub = ap.add_subparsers(dest="cmd", required=True)
