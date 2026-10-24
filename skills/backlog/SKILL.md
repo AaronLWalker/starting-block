@@ -1,6 +1,6 @@
 ---
 name: backlog
-description: Keep an issue backlog as Markdown files in the repo (issues/NNN-slug.md plus a generated index). Use to set one up, file or log a new issue, update or reopen one, list what's open, or fix a malformed backlog. Triggers include "log this as an issue", "add this to the backlog", "write up an issue for this", "what's open in the backlog?", "set up an issue tracker in the repo".
+description: Keep the project's issue backlog, as Markdown files in the repo (issues/NNN-slug.md) or in GitHub Issues. Use to set one up, file or log a new issue, update or reopen one, list what's open, or fix a malformed backlog. Triggers include "log this as an issue", "add this to the backlog", "write up an issue for this", "what's open in the backlog?", "set up an issue tracker in the repo".
 argument-hint: "[init | new <title> | list | check]"
 ---
 
@@ -24,8 +24,9 @@ per package in a monorepo.
 
 ## Set one up
 
-If the repo already tracks work somewhere else (GitHub Issues, Jira, a TODO file), say so and ask before
-creating a second tracker. Otherwise `sb-backlog init`, then show the user `issues/README.md`.
+If the repo tracks work in GitHub Issues, there's nothing to set up: work there (workflow.md, "Where the
+backlog lives"). If it uses another tracker (Jira, a TODO file), say so and ask before creating a second
+one. Otherwise `sb-backlog init`, then show the user `issues/README.md`.
 
 ## Open an issue
 

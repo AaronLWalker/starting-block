@@ -6,3 +6,6 @@ bin/sb-* text eol=lf
 *.py text eol=lf
 *.cmd text eol=crlf
 *.png binary
+
+# Parallel branches each add lines under "Unreleased"; keep both sides.
+CHANGELOG.md merge=union

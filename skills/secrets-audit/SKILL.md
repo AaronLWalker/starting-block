@@ -66,8 +66,10 @@ rewritten. That's destructive and changes every later commit hash, so **ask firs
 
 ## 5. Prevent and report
 
-Offer a pre-commit check. Copy `${CLAUDE_PLUGIN_ROOT}/scripts/secret_scan.py` into the repo so the hook
-doesn't depend on this plugin, and have the hook run `<python> scripts/secret_scan.py --staged`.
+Offer a pre-commit check: `sb-backlog install-hook --with-secret-scan` copies the scanner into `scripts/`
+(so the hook doesn't depend on this plugin) and runs it on every commit. Without a backlog, copy
+`${CLAUDE_PLUGIN_ROOT}/scripts/secret_scan.py` into the repo and have the hook run
+`<python> scripts/secret_scan.py --staged`. Accept known false positives with `--write-baseline`.
 
 Report a table of findings (where, kind, real or false positive, what you did), then what's left for the
 owner: rotations, the history rewrite and force-push, anything you couldn't check.

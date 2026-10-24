@@ -3,6 +3,14 @@
 `backlog`, `plan`, `refine` and `execute` all follow these. Where the repo's own docs or history say
 otherwise, follow the repo.
 
+## Where the backlog lives
+
+1. An `issues/` (or `backlog/`) directory at the git root: the file backlog. Everything below applies.
+2. Otherwise, if the repo says it tracks work in GitHub Issues (README, CONTRIBUTING, `.github/ISSUE_TEMPLATE/`),
+   or the user says so: GitHub Issues. Read `${CLAUDE_PLUGIN_ROOT}/skills/backlog/references/github.md`,
+   which maps each step onto GitHub.
+3. Anything else (another tracker, or nothing yet): ask before starting a file backlog.
+
 ## Running the script
 
 Run `sb-backlog <command>`. The plugin puts it on the shell's PATH, and it finds Python itself (`python3`,
