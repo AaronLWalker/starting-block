@@ -12,6 +12,7 @@
   check                fail if any issue file or the index is malformed or out of step
   install-hook         copy this script into the repo's scripts/ and run `check` from
                        .githooks/pre-commit (--with-secret-scan adds secret_scan.py --staged)
+  github list          the same listing from GitHub Issues instead (see backlog_github.py)
 
 Each issue is `NNN-short-slug.md` with a frontmatter block, one `key: value` per line
 (lists are comma-separated; YAML lists and indented lines are rejected):
@@ -832,6 +833,14 @@ def cmd_install_hook(args):
 
 def main(argv=None):
     utf8_output()
+    argv = sys.argv[1:] if argv is None else argv
+    if argv[:1] == ["github"]:  # the backlog in GitHub Issues: see backlog_github.py
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        try:
+            import backlog_github
+        except ImportError:
+            sys.exit("`github` needs backlog_github.py next to backlog.py (it ships with the plugin).")
+        return backlog_github.main(argv[1:])
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--dir", help="backlog directory (default: $BACKLOG_DIR, else issues/ at the git root)")
     sub = ap.add_subparsers(dest="cmd", required=True)

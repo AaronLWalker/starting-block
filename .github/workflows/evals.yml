@@ -1,0 +1,64 @@
+name: Evals
+
+# Runs the skill evals with real model calls. Needs a repository secret ANTHROPIC_API_KEY; without it the
+# job says so and stops. Bash cases need Claude Code's sandbox, which needs bubblewrap and socat and a
+# non-root user: GitHub's Ubuntu runners provide both.
+
+on:
+  workflow_dispatch:
+    inputs:
+      runs:
+        description: Runs per case
+        default: "3"
+      tag:
+        description: Only cases with this tag (blank for all)
+        default: ""
+  schedule:
+    - cron: "17 6 * * 1"   # Mondays 06:17 UTC
+
+permissions:
+  contents: read
+
+jobs:
+  evals:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+    steps:
+      - name: Check for an API key
+        id: key
+        run: |
+          if [ -z "$ANTHROPIC_API_KEY" ]; then
+            echo "::warning::No ANTHROPIC_API_KEY secret; skipping evals."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v4
+        if: steps.key.outputs.skip != 'true'
+      - uses: actions/setup-node@v4
+        if: steps.key.outputs.skip != 'true'
+        with:
+          node-version: "22"
+      - name: Install Claude Code and the sandbox tools
+        if: steps.key.outputs.skip != 'true'
+        run: |
+          sudo apt-get update -q && sudo apt-get install -y -q bubblewrap socat
+          npm install -g @anthropic-ai/claude-code
+      - name: Run evals
+        if: steps.key.outputs.skip != 'true'
+        run: |
+          TAG="${{ github.event.inputs.tag }}"
+          claude plugin eval . \
+            --runs "${{ github.event.inputs.runs || '3' }}" \
+            ${TAG:+--tag "$TAG"} \
+            --scaffold --trust-plugin --allow-tools Bash Write Edit \
+            --threshold 0.8 --max-cost-usd 15 --no-publish -j 4 \
+            --json results.json --report report.html
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.key.outputs.skip != 'true'
+        with:
+          name: eval-results
+          path: |
+            results.json
+            report.html
+          if-no-files-found: ignore

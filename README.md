@@ -1,16 +1,15 @@
 # Starting Block
 
-A Claude Code plugin for working from an issue backlog kept in the repo. Claude plans what's next, refines
+A Claude Code plugin for working from an issue backlog. Claude plans what's next, refines
 an issue until it's clear what "done" means, then executes it: fix, verify, commit, and close the issue
 with the commit that fixed it.
 
-Issues are plain Markdown files (`issues/001-login-fails-after-reset.md`), so the backlog is versioned with
-the code, works offline, and needs no tracker account.
+Issues are plain Markdown files (`issues/001-login-fails-after-reset.md`), versioned with the code and
+needing no tracker account, or, if your project already uses them, GitHub Issues.
 
 **Good fit:** a repo where you (or a small team) want Claude to pick up well-defined work and finish it
-end to end, with the backlog reviewed in the same PRs as the code.
-**Not yet:** work tracked in GitHub Issues or Jira. The skills only read the file backlog today
-([#3](https://github.com/AaronLWalker/starting-block/issues/3)).
+end to end.
+**Not yet:** Jira, Linear and other trackers.
 
 ## Install
 
@@ -21,12 +20,16 @@ In Claude Code:
 /plugin install starting-block@starting-block
 ```
 
-You need git and Python 3.9 or later. On Windows, install Python from python.org, which adds the `py`
+It runs in Claude Code (terminal, desktop and IDE) on macOS, Linux and Windows; it isn't built for
+skill uploads to claude.ai. You need git and Python 3.9 or later. On Windows, install Python from python.org, which adds the `py`
 launcher; the plugin finds `python3`, `python` or `py` itself. Update with
 `claude plugin update starting-block@starting-block`; remove with
 `claude plugin uninstall starting-block@starting-block`.
 
 ## First 10 minutes
+
+Using GitHub Issues already? Skip step 1: Claude reads and writes your GitHub issues (it needs the `gh`
+CLI logged in, or GitHub tools in Claude Code), and closes them through `Fixes #N` in your PRs.
 
 1. **Start a backlog.** Ask: *"Set up an issue backlog in this repo."* Claude creates `issues/README.md`
    (conventions and an index table).
@@ -110,7 +113,9 @@ python scripts/backlog.py check            # fail if an issue file is malformed 
 python scripts/secret_scan.py --history    # fail if anything looks like a committed secret
 ```
 
-A CI step, after checking out with `fetch-depth: 0`:
+`sb-backlog install-hook --with-secret-scan` does the copying for you and adds both checks to a
+`.githooks/pre-commit` hook (it keeps anything already there). A CI step, after checking out with
+`fetch-depth: 0`:
 
 ```yaml
 - run: python scripts/backlog.py check && python scripts/secret_scan.py --history

@@ -1,6 +1,6 @@
 ---
 name: execute
-description: Work one issue from the in-repo backlog through to done. Confirms it's ready, makes the smallest change that meets its "Done when", verifies, commits, and closes the issue citing the commit or PR. Use for "work on issue 12", "fix the next backlog issue", "do the top P1 from issues/", "pick something off the backlog and do it".
+description: Work one issue from the backlog (in-repo files or GitHub Issues) through to done. Confirms it's ready, makes the smallest change that meets its "Done when", verifies, commits, and closes the issue citing the commit or PR. Use for "work on issue 12", "fix the next backlog issue", "do the top P1 from issues/", "pick something off the backlog and do it".
 argument-hint: "<issue number | next>"
 ---
 
@@ -46,7 +46,8 @@ hook with `--no-verify`. If a check fails and the fix is outside the issue, stop
 
 1. Commit the fix in the repo's style: the subject says what changed, the body says why and names the issue.
 2. `sb-backlog close NNN --resolution "<what fixed it> (<hash>)"`; in a PR workflow, name the PR instead
-   (workflow.md). Mention any follow-up issue. Run `sb-backlog check`, then commit the issue file and index.
+   (workflow.md). In GitHub Issues, put `Fixes #N` in the commit or PR instead (github.md).
+   Mention any follow-up issue. Run `sb-backlog check`, then commit the issue file and index.
 3. If you learned something the next person will need (a gotcha, a verify command), add it to the repo's
    instructions file: see `${CLAUDE_SKILL_DIR}/references/recording-facts.md`.
 
