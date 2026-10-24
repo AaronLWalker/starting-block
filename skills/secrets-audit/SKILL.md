@@ -13,16 +13,20 @@ Without Python, use `gitleaks` if it's installed, or search with `git grep` and 
 ```bash
 sb-secret-scan               # tracked files in the working tree
 sb-secret-scan --history     # also every line ever added, on every branch and tag
+sb-secret-scan --since main  # like --history, but only commits not on main
 sb-secret-scan --staged      # only what's staged (for a pre-commit hook)
+sb-secret-scan --history --write-baseline .secretscan-baseline.json   # accept today's findings
+sb-secret-scan --history --baseline .secretscan-baseline.json         # report only new ones
 ```
 
+If `gitleaks` is installed, the scanner runs it too and merges its findings (`--no-gitleaks` turns that off).
 It prints matches redacted. **Never print, paste or commit a secret's value**: not in chat, an issue, a
 commit message or a PR. Refer to it by file, line and kind.
 
 ## 1. Scan
 
-1. `sb-secret-scan --history`. If `gitleaks` is installed, also run `gitleaks detect --redact`: patterns
-   miss things. (Skip trufflehog's `--only-verified`: verifying sends the secret to its provider.)
+1. `sb-secret-scan --history`. If you also run trufflehog, skip `--only-verified`: verifying sends the
+   secret to its provider.
 2. Read the `git ls-files` list for files that hold secrets by nature: app config the app writes itself,
    `.env` files, key files, database dumps, backups, exported sessions.
 3. Check `.gitignore` covers `.env`, key files and those configs.
@@ -62,8 +66,10 @@ rewritten. That's destructive and changes every later commit hash, so **ask firs
 
 ## 5. Prevent and report
 
-Offer a pre-commit check. Copy `${CLAUDE_PLUGIN_ROOT}/scripts/secret_scan.py` into the repo so the hook
-doesn't depend on this plugin, and have the hook run `<python> scripts/secret_scan.py --staged`.
+Offer a pre-commit check: `sb-backlog install-hook --with-secret-scan` copies the scanner into `scripts/`
+(so the hook doesn't depend on this plugin) and runs it on every commit. Without a backlog, copy
+`${CLAUDE_PLUGIN_ROOT}/scripts/secret_scan.py` into the repo and have the hook run
+`<python> scripts/secret_scan.py --staged`. Accept known false positives with `--write-baseline`.
 
 Report a table of findings (where, kind, real or false positive, what you did), then what's left for the
 owner: rotations, the history rewrite and force-push, anything you couldn't check.
