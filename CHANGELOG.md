@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- GitHub Issues as the backlog: `sb-backlog github list` (via `gh api`, REST only) and `github from-json`
+  give the same JSON as the file backlog; priority from `P1`–`P3` labels or a `Priority:` body line,
+  `Depends on #N` lines, Needs checklists. Skills pick the backend from where the repo tracks work, and close
+  GitHub issues through `Fixes #N`. See `skills/backlog/references/github.md`.
 - `SECURITY.md`, issue templates (bug, idea, secret-scanner miss) and a pull request template.
 - Evals workflow: weekly and on demand, with the sandbox tools Bash cases need. New eval case: don't start
   a file backlog in a repo that tracks work in GitHub Issues; execute must not `git add -A`.
