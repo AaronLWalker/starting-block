@@ -70,6 +70,12 @@ class NormalizeTest(unittest.TestCase):
 
 
 class CommandTest(unittest.TestCase):
+    def test_label_filter(self):
+        issues = gh.normalize([issue(1, labels=["P2", "Agent-OK"]), issue(2, labels=["P1"]), issue(3)])
+        self.assertEqual([i["number"] for i in gh.select(issues, "open", "agent-ok")], ["#1"])
+        self.assertEqual(len(gh.select(issues, "open")), 3)
+        self.assertEqual(issues[0]["labels"], ["P2", "Agent-OK"])
+
     def test_from_json_sorts_and_filters(self):
         data = [issue(5, labels=["P3"]), issue(7, labels=["P1"]), issue(6, state="CLOSED", labels=["P1"]), issue(8)]
         fd, path = tempfile.mkstemp(suffix=".json")

@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.0 (2026-10-24)
+
+- New `run` skill ([#18](https://github.com/AaronLWalker/starting-block/issues/18)): works the ready issues
+  one after another, each in a fresh subagent running `execute`, locally or as one PR per issue (`--pr`).
+  It stops at `--max N`, after two failures in a row, or on a red baseline. A GitHub Actions template
+  (`skills/run/templates/backlog-run.yml`) runs it on a schedule with a cost cap.
+- `execute`: a branch and PR per issue in PR mode; when it stops, it cleans up its own edits and leaves a
+  dated Progress note; ends with a `RESULT:` line.
+- `sb-backlog github list --label NAME`: the trust gate for unattended runs on public repos.
+
 ## 0.2.0 (2026-10-24)
 
 **GitHub Issues as the backlog** ([#3](https://github.com/AaronLWalker/starting-block/issues/3))

@@ -54,6 +54,7 @@ Only *execute* commits on its own; the other skills leave their changes for you 
 | `/starting-block:plan` | Triage everything: done, stale, blocked, waiting on you, what's next | "what should I work on next?" |
 | `/starting-block:refine` | Make one issue ready: check its facts, fix plan, Done when | "refine issue 14" |
 | `/starting-block:execute` | Take a ready issue to done: fix, verify, commit, close | "work on issue 12" |
+| `/starting-block:run` | Work through every ready issue, one after another, unattended if you like | "work through the backlog" |
 
 **Also included**, for keeping a repo safe to share:
 
@@ -93,6 +94,24 @@ Concrete steps.
 
 Full spec: [issue-format.md](skills/backlog/references/issue-format.md).
 How the skills commit, close issues and handle teams and pull requests: [workflow.md](skills/backlog/references/workflow.md).
+
+## Running the backlog unattended
+
+`/starting-block:run` works the ready issues in order. Each issue gets a fresh subagent running `execute`,
+and the run stops at `--max N` issues (default 5), after two failures in a row, or if your tests are already
+failing. Issues it can't finish stay open with a dated note saying why. It never does a person's steps,
+never pushes to your default branch, and never merges.
+
+- **Local:** commits each issue on the current branch. From a terminal or cron, in a dedicated clone:
+  `claude -p "/starting-block:run --max 3" --permission-mode acceptEdits --allowedTools Bash Read Write Edit Glob Grep Skill Agent`.
+  (Narrower Bash rules must cover your tests, `git` and `sb-backlog`, or issues stop on a permission denial.)
+- **Pull requests:** `--pr` gives each issue its own branch and PR for you to review.
+- **On a schedule:** copy [`skills/run/templates/backlog-run.yml`](skills/run/templates/backlog-run.yml) to
+  `.github/workflows/`. It runs weekdays in PR mode, with a cost cap; the comments at its top cover the API
+  key and token secrets.
+- **GitHub Issues on a public repo:** anyone can open an issue, and its text becomes Claude's instructions.
+  The run only works issues carrying a label you apply (`--label agent-ok`); only people with triage
+  rights can add labels.
 
 ## Teams, pull requests and monorepos
 

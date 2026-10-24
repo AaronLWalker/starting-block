@@ -16,6 +16,8 @@ skills work the same way; only the storage changes. An issue's body uses the sam
 ## Reading
 
 `sb-backlog github list --json` returns the same shape as `sb-backlog list --json` (numbers like `"#12"`).
+`--label <name>` keeps only issues with that label: on a public repo, unattended runs work only issues a
+maintainer has labelled.
 It uses `gh api`, so `gh` must be installed and logged in (`gh auth status`). Without gh, fetch the
 issues with whatever GitHub tool you have (e.g. the GitHub MCP tools), save the JSON list to a file
 outside the repo, and run `sb-backlog github from-json <file> --json`.

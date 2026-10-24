@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """GitHub Issues as the backlog: the same JSON shape as `backlog.py list --json`.
 
-  backlog.py github list [--status open|closed|all] [--repo OWNER/NAME] [--json]
-  backlog.py github from-json FILE [--status ...] [--json]
+  backlog.py github list [--status open|closed|all] [--label NAME] [--repo OWNER/NAME] [--json]
+  backlog.py github from-json FILE [--status ...] [--label NAME] [--json]
+
+--label keeps only issues carrying that label. On a public repo anyone can open an issue, but only
+people with triage rights can label one, so an unattended run should work only labelled issues.
 
 `list` reads the issues through the gh CLI's REST calls (`gh api`; installed and logged in). Without gh,
 fetch the issues another way (e.g. the GitHub MCP tools), save them as a JSON list, and pass the file to
@@ -91,6 +94,7 @@ def normalize(raw):
             "status": "closed" if state == "closed" else "open",
             "priority": priority,
             "area": areas,
+            "labels": labels,
             "opened": created[:10] or None,
             "closed": closed[:10] or None,
             "depends": depends,
@@ -108,8 +112,9 @@ def normalize(raw):
     return issues
 
 
-def select(issues, status):
-    sel = [i for i in issues if status == "all" or i["status"] == status]
+def select(issues, status, label=None):
+    sel = [i for i in issues if (status == "all" or i["status"] == status)
+           and (not label or label.lower() in (l.lower() for l in i["labels"]))]
     sel.sort(key=lambda i: (PRIORITIES.index(i["priority"]) if i["priority"] in PRIORITIES else 9,
                             int(i["number"].lstrip("#"))))
     return sel
@@ -157,6 +162,7 @@ def main(argv=None):
         else:
             p.add_argument("--repo", help="OWNER/NAME (default: the current repo)")
         p.add_argument("--status", default="open", choices=("open", "closed", "all"))
+        p.add_argument("--label", help="only issues with this label (an unattended run's trust gate)")
         p.add_argument("--json", action="store_true")
     args = ap.parse_args(argv)
     if args.cmd == "list":
@@ -165,7 +171,7 @@ def main(argv=None):
         f = sys.stdin if args.file == "-" else open(args.file, encoding="utf-8")
         with f:
             raw = json.load(f)
-    show(select(normalize(raw), args.status), args.json)
+    show(select(normalize(raw), args.status, args.label), args.json)
     return 0
 
 
