@@ -1,0 +1,83 @@
+# Work through the backlog on a schedule: one branch and pull request per ready issue.
+# (Template from the Starting Block plugin's `run` skill. Copy to .github/workflows/backlog-run.yml.)
+#
+# Setup, once:
+# 1. Add a repository secret ANTHROPIC_API_KEY.
+# 2. Pull requests opened with the default GITHUB_TOKEN don't trigger your other workflows, so CI won't run
+#    on them. To get CI, add a secret BACKLOG_RUN_TOKEN: a fine-grained token (or GitHub App token) with
+#    Contents, Pull requests and Issues read/write on this repo. Without it, also turn on Settings →
+#    Actions → General → "Allow GitHub Actions to create and approve pull requests".
+# 3. Backlog in GitHub Issues: create a label (default `agent-ok`) and put it on the issues the run may
+#    work. Only people with triage rights can label, so issue text from strangers is never acted on.
+#    Backlog in issues/ files: the label is ignored; those files arrive through reviewed commits.
+# 4. Allowed tools: the run may use any shell command, on a throwaway runner that holds only this repo's
+#    token. Narrow --allowedTools to your test and build commands if you prefer.
+
+name: Backlog run
+
+on:
+  workflow_dispatch:
+    inputs:
+      max:
+        description: Most issues to work in this run
+        default: "3"
+      label:
+        description: GitHub Issues only — work only issues with this label
+        default: agent-ok
+      budget:
+        description: Most to spend on model calls in this run (USD)
+        default: "20"
+  schedule:
+    - cron: "23 7 * * 1-5"   # weekdays 07:23 UTC
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: backlog-run        # one run at a time, so two runs never pick the same issue
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      GH_TOKEN: ${{ secrets.BACKLOG_RUN_TOKEN || github.token }}
+      MAX: ${{ github.event.inputs.max || '3' }}
+      LABEL: ${{ github.event.inputs.label || 'agent-ok' }}
+      BUDGET: ${{ github.event.inputs.budget || '20' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.BACKLOG_RUN_TOKEN || github.token }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      # Add your project's own setup here (dependencies, build) so its tests can run.
+      - name: Install Claude Code and the Starting Block plugin
+        run: |
+          npm install -g @anthropic-ai/claude-code
+          claude plugin marketplace add AaronLWalker/starting-block
+          claude plugin install starting-block@starting-block
+          git config user.name "backlog-run[bot]"
+          git config user.email "backlog-run@users.noreply.github.com"
+      - name: Work the backlog
+        run: |
+          claude -p "/starting-block:run --pr --max $MAX --label $LABEL" \
+            --permission-mode acceptEdits \
+            --allowedTools "Bash" "Read" "Write" "Edit" "Glob" "Grep" "Skill" "Agent" "TodoWrite" \
+            --max-budget-usd "$BUDGET" | tee run-report.md
+          cat run-report.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: backlog-run-report
+          path: run-report.md
+          if-no-files-found: ignore
