@@ -1,6 +1,9 @@
 import contextlib
 import io
 import json
+import os
+import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -9,6 +12,15 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 import secret_scan  # noqa: E402
+
+
+def remove_tree(path):
+    """rmtree that also clears the read-only bits git puts on object files (Windows can't delete those)."""
+    def retry(func, p, _exc):
+        os.chmod(p, stat.S_IWRITE)
+        func(p)
+    shutil.rmtree(path, onerror=retry)
+
 
 # Fixture secrets are assembled from pieces so this file doesn't look like a leak to scanners.
 GH = "ghp_" + "abcdefghijklmnopqrstuvwxyzABCDEFGHIJ"
@@ -45,13 +57,13 @@ class ScanLineTest(unittest.TestCase):
 
 class RepoScanTest(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.root = Path(self.tmp.name)
+        self.tmp = tempfile.mkdtemp()
+        self.root = Path(self.tmp)
         for args in (["init", "-q"], ["config", "user.email", "t@example.com"], ["config", "user.name", "T"]):
             subprocess.run(["git", *args], cwd=self.root, check=True)
 
     def tearDown(self):
-        self.tmp.cleanup()
+        remove_tree(self.tmp)
 
     def git(self, *args):
         subprocess.run(["git", *args], cwd=self.root, check=True, capture_output=True)

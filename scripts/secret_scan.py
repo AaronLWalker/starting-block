@@ -62,7 +62,8 @@ def entropy(s):
 
 
 def git(*args, cwd):
-    return subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, errors="replace", check=True).stdout
+    return subprocess.run(["git", "-c", "core.quotepath=off", *args], cwd=cwd, capture_output=True, text=True,
+                          encoding="utf-8", errors="replace", check=True).stdout
 
 
 def looks_secret(value):
@@ -104,7 +105,7 @@ def load_ignores(root):
     f = root / ".secretscanignore"
     if not f.exists():
         return []
-    return [l.strip() for l in f.read_text().splitlines() if l.strip() and not l.startswith("#")]
+    return [l.strip() for l in f.read_text(encoding="utf-8").splitlines() if l.strip() and not l.startswith("#")]
 
 
 def sensitive_name(path):
@@ -166,6 +167,11 @@ def scan_history(root, globs):
 
 
 def main(argv=None):
+    for stream in (sys.stdout, sys.stderr):  # Windows consoles default to a legacy code page
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):
+            pass
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("path", nargs="?", default=".", help="any path inside the repo (default: .)")
     ap.add_argument("--history", action="store_true", help="also scan all history on all refs")

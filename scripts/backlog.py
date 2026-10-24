@@ -24,7 +24,7 @@ Each issue is `NNN-short-slug.md` with a frontmatter block:
 
 followed by sections such as Problem, Proposed fix, Done when, Progress, Resolution.
 A section whose heading starts with "Needs" (e.g. "## Needs the account holder")
-holds steps only a person can do.
+holds steps only a person can do; it stops blocking once every step is ticked (`- [x]`).
 
 Standard library only. The backlog directory is --dir, else $BACKLOG_DIR, else
 `issues/` (or an existing `backlog/`) at the git root.
@@ -51,17 +51,18 @@ TABLE_RULE = "|---|---|---|"
 README_TEMPLATE = """# Issues
 
 Issues live here as files: one Markdown file per issue, versioned with the code they're about.
+Format and conventions: https://github.com/AaronLWalker/starting-block
 
-- **Open one:** `backlog.py new --title "..." --priority P2`, or copy an existing file, give it the
-  next number and set `status: open`.
-- **Close one:** set `status: closed`, add `closed: YYYY-MM-DD` and a `## Resolution` saying what
-  fixed it (ideally a commit hash). Leave the file in place so the history stays findable.
-- **List open issues:** `grep -l 'status: open' {dirname}/*.md`
+- **Open one:** `sb-backlog new --title "..." --priority P2` (or `python3 <plugin>/scripts/backlog.py new ...`),
+  or copy an existing file, give it the next number and set `status: open`.
+- **Close one:** set `status: closed`, add `closed: YYYY-MM-DD` and a `## Resolution` saying what fixed it
+  (a commit hash or pull request). Leave the file in place so the history stays findable.
+- **List open issues:** `sb-backlog list`
 
 Priority: **P1** fix soon (risk or blocking), **P2** worth doing, **P3** tidy-up.
 
-A section headed `## Needs <someone>` lists steps only a person can do (an account setting,
-a purchase, a decision). Agents stop there and ask.
+A `## Needs <someone>` section is a checklist of steps only a person can do (an account setting, a
+purchase, a credential, a decision). Agents stop there until every box is ticked.
 
 {head}
 {rule}
@@ -96,11 +97,17 @@ class Issue:
         self.meta, self.body, self.meta_error = parse_frontmatter(self.text)
         self.title = None
         self.sections = []
+        self.section_text = {}
+        current = None
         for line in self.body.splitlines():
             if self.title is None and line.startswith("# "):
                 self.title = line[2:].strip()
             elif line.startswith("## "):
-                self.sections.append(line[3:].strip())
+                current = line[3:].strip()
+                self.sections.append(current)
+                self.section_text[current] = []
+            elif current is not None:
+                self.section_text[current].append(line)
 
     @property
     def status(self):
@@ -120,7 +127,15 @@ class Issue:
 
     @property
     def needs(self):
-        return [s for s in self.sections if s.lower().startswith("needs")]
+        """`## Needs ...` sections with steps still to do. A section is done when every step is `- [x]`."""
+        outstanding = []
+        for name in self.sections:
+            if not name.lower().startswith("needs"):
+                continue
+            steps = [l.strip() for l in self.section_text[name] if re.match(r"\s*(?:[-*]|\d+[.)])\s", l)]
+            if not steps or not all(re.match(r"(?:[-*]|\d+[.)])\s+\[[xX]\]", st) for st in steps):
+                outstanding.append(name)
+        return outstanding
 
     @property
     def has_done_when(self):
@@ -167,9 +182,25 @@ def parse_frontmatter(text):
     return meta, "", "frontmatter is never closed with ---"
 
 
+def write_file(path, text):
+    """Write UTF-8 with LF line endings on every platform (Path.write_text would use CRLF on Windows)."""
+    with open(str(path), "w", encoding="utf-8", newline="\n") as f:
+        f.write(text)
+
+
+def utf8_output():
+    """Print UTF-8 even where the console defaults to a legacy code page (Windows)."""
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):
+            pass
+
+
 def git_root():
     try:
-        out = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True, check=True)
+        out = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True,
+                             encoding="utf-8", errors="replace", check=True)
         return Path(out.stdout.strip())
     except (OSError, subprocess.CalledProcessError):
         return Path.cwd()
@@ -255,7 +286,7 @@ def write_index(directory, issues):
     readme = directory / "README.md"
     new = render_index(directory, issues)
     if not readme.exists() or readme.read_text(encoding="utf-8") != new:
-        readme.write_text(new, encoding="utf-8")
+        write_file(readme, new)
         return True
     return False
 
@@ -289,7 +320,7 @@ def cmd_init(args):
     if readme.exists():
         print("{} already exists; left as is.".format(readme))
     else:
-        readme.write_text(README_TEMPLATE.format(dirname=d.name, head=TABLE_HEAD, rule=TABLE_RULE), encoding="utf-8")
+        write_file(readme, README_TEMPLATE.format(dirname=d.name, head=TABLE_HEAD, rule=TABLE_RULE))
         print("Created {}".format(readme))
     return 0
 
@@ -337,11 +368,11 @@ def cmd_new(args):
     num = next_number(issues)
     path = d / "{}-{}.md".format(num, args.slug or slugify(args.title))
     area = "area: {}\n".format(args.area) if args.area else ""
-    path.write_text(ISSUE_TEMPLATE.format(
+    write_file(path, ISSUE_TEMPLATE.format(
         priority=args.priority, area=area, opened=args.date or today(), title=args.title,
-        problem=args.problem or "", done=args.done or ""), encoding="utf-8")
+        problem=args.problem or "", done=args.done or ""))
     if args.depends:
-        path.write_text(set_meta(path.read_text(encoding="utf-8"), {"depends": args.depends}), encoding="utf-8")
+        write_file(path, set_meta(path.read_text(encoding="utf-8"), {"depends": args.depends}))
     issues, _ = load(d)
     write_index(d, issues)
     print(path)
@@ -362,7 +393,7 @@ def cmd_close(args):
         if "## Resolution" in text:
             sys.exit("Issue {} already has a Resolution section; edit it by hand.".format(num))
         text = text.rstrip("\n") + "\n\n## Resolution\n" + args.resolution.strip() + "\n"
-    issue.path.write_text(text, encoding="utf-8")
+    write_file(issue.path, text)
     issues, _ = load(d)
     write_index(d, issues)
     print(issue.path)
@@ -460,6 +491,7 @@ def cmd_check(args):
 
 
 def main(argv=None):
+    utf8_output()
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--dir", help="backlog directory (default: $BACKLOG_DIR, else issues/ at the git root)")
     sub = ap.add_subparsers(dest="cmd", required=True)

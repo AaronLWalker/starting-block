@@ -3,13 +3,13 @@
 ## File
 
 `issues/NNN-short-slug.md`: a three-digit number (never reused) and a few lowercase words.
-`issues/README.md` holds the conventions and an index table that `backlog.py index` regenerates:
+`issues/README.md` holds the conventions and an index table that `sb-backlog index` regenerates:
 
 ```markdown
 | # | Priority | Issue |
 |---|---|---|
-| [001](001-docs-recommend-bare-compose-up.md) | P1 (closed) | Docs tell you to run a bare `docker compose up -d` |
-| [006](006-weekly-upgrade-fails-silently.md) | P2 | Weekly upgrade+reboot fails silently |
+| [001](001-login-fails-after-password-reset.md) | P1 (closed) | Login fails after a password reset |
+| [004](004-api-docs-out-of-sync-with-routes.md) | P2 | API docs list routes that no longer exist |
 ```
 
 Text around the table is kept; only the table is rewritten.
@@ -21,9 +21,10 @@ Text around the table is kept; only the table is rewritten.
 status: open          # open | closed
 closed: 2026-09-20    # required when closed, absent when open
 priority: P2          # P1 | P2 | P3
-area: docs, ci        # optional, comma-separated, the repo's own words
+area: api, docs       # optional, comma-separated, the repo's own words (in a monorepo: the package)
 opened: 2026-09-14
 depends: 004, 012     # optional; these must close first
+owner: sam            # optional; who's working on it
 ---
 ```
 
@@ -39,26 +40,27 @@ A `# Title` line, then the sections that apply, in this order:
 
 | Section | When | What goes in it |
 |---|---|---|
-| `## Problem` (or `## Background`) | always | What's wrong and the evidence: file and line, the error text, the command and its output, when it was seen. |
+| `## Problem` | always | What's wrong and the evidence: file and line, the error text, the command and its output, when it was seen. |
 | `## Proposed fix` | always | Concrete steps naming the files or settings. With several options, number them and recommend one. |
-| `## Needs <someone>` | if any | Steps only a person can take: an account setting, a purchase, a credential, a decision that's theirs. Agents stop here. |
-| `## Done when` (or `## Close when`) | always | Observable checks: a command and what it prints, a page that loads, a file that's gone. Not "it works". |
+| `## Needs <someone>` | if any | Steps only a person can take, as a checklist (`- [ ] ...`). Agents stop here until every box is ticked (`- [x]`). |
+| `## Done when` | always | Observable checks: a command and what it prints, a test that passes, a page that loads. Not "it works". |
 | `## Verify` | risky changes | How to confirm the change in the running system. |
 | `## Roll back` | risky changes | The exact steps to undo it. |
 | `## Progress (YYYY-MM-DD)` | multi-session work | Dated facts: what's done, what was found, what's left. |
-| `## Resolution` | when closed | What fixed it and the commit hash(es); where any leftover went (another issue number). |
+| `## Resolution` | when closed | What fixed it, and the commit hash or pull request; where any leftover went (another issue number). |
+
+`Needs` steps are anything that takes the person's account, money, credentials, physical access, admin
+rights (`sudo`, a production console), their own devices, or a decision that's theirs to make.
 
 ## Writing it
 
 - **Title** says what's wrong in plain words, so the index reads as a list of problems:
-  "Weekly upgrade+reboot fails silently", not "Cron improvements".
-- **State facts, with dates.** "On 2026-09-14 the log showed `DownloadLimitExceeded`", not "it seems to be
-  rate limited". Say what you couldn't check.
+  "Login fails after a password reset", not "Auth improvements".
+- **State facts, with dates.** "On 2026-09-14 CI failed with `ECONNRESET` in `test_upload`", not "uploads
+  seem flaky". Say what you couldn't check.
 - **Quote the evidence**: the error line, the config value, the count. Link other issues by number.
-- **Explain why** a step matters when it isn't obvious: what breaks without it.
-- **Keep it short.** Bullets and tables over paragraphs. No changelog, no hedging, no filler.
-- **No secrets.** Never paste a key, password, token or cookie into an issue, even redacted beyond recognition
-  in a public repo. Name the file it lives in instead.
+- **Keep it short.** Bullets over paragraphs. No changelog, no hedging.
+- **No secrets.** Never paste a key, password, token or cookie into an issue. Name the file it lives in.
 
 ## Example
 
@@ -66,22 +68,28 @@ A `# Title` line, then the sections that apply, in this order:
 ---
 status: open
 priority: P2
-area: host, monitoring
+area: auth
 opened: 2026-09-14
 ---
 
-# Weekly upgrade+reboot fails silently
+# Login fails after a password reset
 
 ## Problem
-`/etc/cron.d/weekly-reboot` runs `apt-get update && apt-get dist-upgrade -y && /sbin/reboot`.
-If an apt step fails (lock held, dpkg prompt), the chain stops: no reboot, a half-applied upgrade,
-and nothing tells anyone. Cron output goes to root's mail, which nobody reads.
+After resetting a password, the first login returns 401. On 2026-09-14, `POST /login` logged
+`session token expired` for 3 users. `reset_password()` in `src/auth/reset.py:41` rotates the user's
+token secret but leaves the old session cookie, and `login()` checks that cookie before the password.
 
 ## Proposed fix
-- Wrap the job in a script that mails on non-zero exit.
-- Add `DEBIAN_FRONTEND=noninteractive` and `-o Dpkg::Options::=--force-confold`.
-- Log to `/var/log/weekly-upgrade.log`.
+- Clear the session cookie in `reset_password()`.
+- Add a test: reset, then log in with the new password.
 
 ## Done when
-A deliberately failing apt step produces an email, and a normal run reboots.
+- `pytest tests/test_auth.py -k reset` passes, including the new test.
+- Logging in right after a reset on the staging site succeeds.
 ```
+
+## Without the script
+
+If neither `sb-backlog` nor Python is available, do the steps by hand: the next number is one more than
+the highest `NNN-` file; the file follows the example above; the index row is
+`| [NNN](NNN-slug.md) | P2 | Title |`, with `P2 (closed)` once it's closed, sorted by number.

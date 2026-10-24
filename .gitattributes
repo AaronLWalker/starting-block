@@ -1,0 +1,8 @@
+# Shell launchers and scripts must keep LF even on Windows checkouts (a CRLF shebang breaks Git Bash);
+# cmd files need CRLF for labels and goto to work reliably.
+* text=auto
+bin/sb-* text eol=lf
+*.sh text eol=lf
+*.py text eol=lf
+*.cmd text eol=crlf
+*.png binary

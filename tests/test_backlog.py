@@ -1,6 +1,9 @@
 import contextlib
 import io
 import json
+import os
+import shutil
+import stat
 import sys
 import tempfile
 import unittest
@@ -8,6 +11,15 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 import backlog  # noqa: E402
+
+
+def remove_tree(path):
+    """rmtree that also clears the read-only bits git puts on object files (Windows can't delete those)."""
+    def retry(func, p, _exc):
+        os.chmod(p, stat.S_IWRITE)
+        func(p)
+    shutil.rmtree(path, onerror=retry)
+
 
 ISSUE = """---
 status: {status}
@@ -35,12 +47,12 @@ def run(*argv):
 
 class BacklogTest(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.dir = Path(self.tmp.name) / "issues"
+        self.tmp = tempfile.mkdtemp()
+        self.dir = Path(self.tmp) / "issues"
         run("--dir", str(self.dir), "init")
 
     def tearDown(self):
-        self.tmp.cleanup()
+        remove_tree(self.tmp)
 
     def write(self, name, status="open", priority="P2", title="A thing", extra="", tail=""):
         (self.dir / name).write_text(ISSUE.format(status=status, priority=priority, title=title,
@@ -74,6 +86,18 @@ class BacklogTest(unittest.TestCase):
         self.assertIn("status: closed\nclosed: 2026-09-20\n", text)
         self.assertTrue(text.rstrip().endswith("## Resolution\nFixed in abc123."))
         self.assertIn("| P2 (closed) |", (self.dir / "README.md").read_text())
+        self.assertEqual(self.check(), ([], []))
+
+    def test_writes_lf_line_endings(self):
+        run("--dir", str(self.dir), "new", "--title", "Line endings", "--priority", "P3")
+        for f in self.dir.glob("*.md"):
+            self.assertNotIn(b"\r\n", f.read_bytes(), f.name)
+
+    def test_reads_crlf_files(self):
+        self.write("001-thing.md")
+        crlf = (self.dir / "001-thing.md").read_bytes().replace(b"\n", b"\r\n")
+        (self.dir / "001-thing.md").write_bytes(crlf)
+        run("--dir", str(self.dir), "index")
         self.assertEqual(self.check(), ([], []))
 
     def test_stale_index_is_an_error(self):
@@ -125,6 +149,15 @@ class BacklogTest(unittest.TestCase):
         self.assertFalse(data["002"]["ready"])
         self.assertEqual(data["003"]["needs_human"], ["Needs the account holder"])
         self.assertFalse(data["003"]["ready"])
+
+    def test_needs_section_done_when_all_ticked(self):
+        self.write("001-a.md", tail="\n## Needs the account holder\n- [x] Turn on billing.\n- [ ] Add a card.\n")
+        self.write("002-b.md", tail="\n## Needs the account holder\n- [x] Turn on billing.\n- [X] Add a card.\n")
+        _, out = run("--dir", str(self.dir), "list", "--json")
+        data = {d["number"]: d for d in json.loads(out)}
+        self.assertFalse(data["001"]["ready"])
+        self.assertTrue(data["002"]["ready"])
+        self.assertEqual(data["002"]["needs_human"], [])
 
     def test_missing_done_when_warns(self):
         (self.dir / "001-a.md").write_text("---\nstatus: open\npriority: P2\nopened: 2026-01-01\n---\n\n# A\n\n## Problem\nx\n")
