@@ -1,0 +1,6 @@
+schema_version: "1.1"
+name: backlog-respects-existing-tracker
+description: "In a repo that tracks work in GitHub Issues, don't start a second tracker in issues/."
+tags: [backlog, negative]
+context:
+  scaffold_script: scaffold.sh

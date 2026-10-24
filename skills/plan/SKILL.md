@@ -1,6 +1,6 @@
 ---
 name: plan
-description: Triage the whole in-repo issue backlog and say what to work on next. Finds issues that are already fixed, stale, duplicated, blocked or waiting on a person, and returns a short ordered list of what's ready. Use for "what should I work on next?", "triage the backlog", "groom the issues", "which issues are ready?".
+description: Triage the whole issue backlog (in-repo files or GitHub Issues) and say what to work on next. Finds issues that are already fixed, stale, duplicated, blocked or waiting on a person, and returns a short ordered list of what's ready. Use for "what should I work on next?", "triage the backlog", "groom the issues", "which issues are ready?".
 argument-hint: "[area or priority to focus on]"
 ---
 
@@ -10,14 +10,15 @@ Read `${CLAUDE_PLUGIN_ROOT}/skills/backlog/references/workflow.md` first.
 
 ## 1. Make it sound
 
-Run `sb-backlog check` and fix mechanical errors (stale index, missing dates). If there's no backlog
-directory, say so and offer the `backlog` skill to set one up.
+File backlog: run `sb-backlog check` and fix mechanical errors (stale index, missing dates). GitHub Issues:
+skip this. No backlog at all: say so and offer the `backlog` skill to set one up.
 
 ## 2. Look at each open issue
 
-`sb-backlog list --json` gives each open issue's priority, `open_depends`, unticked `needs_human`
-sections, and a `ready` flag. Those are a start, not the verdict. Read each issue and check it against the
-repo (workflow.md, "Is the problem still there?"). Then classify it as one of:
+`sb-backlog list --json` (or `sb-backlog github list --json`) gives each open issue's priority,
+`open_depends`, unticked `needs_human` sections, and a `ready` flag. Those are a start, not the verdict.
+Read each issue and check it against the repo (workflow.md, "Is the problem still there?"). Then classify
+it as one of:
 
 | State | Meaning | Next action |
 |---|---|---|
