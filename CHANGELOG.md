@@ -1,38 +1,40 @@
 # Changelog
 
-## Unreleased
+## 0.2.0 (2026-10-24)
 
-- `scripts/secret_scan.py` ([#8](https://github.com/AaronLWalker/starting-block/issues/8)):
-  - `--history` streams `git log` instead of reading it into memory, and reports the line number in each
-    commit. History findings name the commit by 12 hex digits instead of 7.
-  - `--since <rev>` scans only commits not reachable from `<rev>` (plus the working tree).
-  - `--baseline <file>` and `--write-baseline <file>`: accept triaged findings by location, rule and a
-    SHA-256 of the value; the value itself is never written.
-  - Runs `gitleaks` too when it's on PATH (not with `--staged`; `--no-gitleaks` turns it off) and merges its
-    findings as `gitleaks:<RuleID>`. A gitleaks failure is a warning.
-  - New rules: Azure storage account keys, GCP service-account key files (reported once, not also as a
-    private key), npm, PyPI and Hugging Face tokens, Discord and Telegram bot tokens.
-  - Each finding in `--json` output has a `sha256` of its value.
-- `backlog.py reopen N`: sets `status: open`, drops `closed:`, and renames `## Resolution` to
-  `## Earlier resolution (date)`.
-- `backlog.py set N key=value ...`: sets frontmatter fields (`key=` removes one) and re-indexes. Checks
-  priorities and dates; status changes to or from closed go through `close` and `reopen`.
-- `check` reports frontmatter it can't parse (indented lines, YAML lists, `key:` over a nested block)
-  instead of misreading it.
+**GitHub Issues as the backlog** ([#3](https://github.com/AaronLWalker/starting-block/issues/3))
+- Repos that track work in GitHub Issues no longer need an `issues/` directory. `sb-backlog github list`
+  (via `gh api`, REST only) and `github from-json` give the same JSON as the file backlog: priority from
+  `P1`–`P3` labels or a `Priority:` body line, `Depends on #N` lines, Needs checklists. The skills pick the
+  backend from where the repo tracks work, and close GitHub issues through `Fixes #N`
+  (`skills/backlog/references/github.md`).
+
+**backlog.py** ([#7](https://github.com/AaronLWalker/starting-block/issues/7))
+- `reopen N`: `status: open`, drops `closed:`, renames `## Resolution` to `## Earlier resolution (date)`.
+- `set N key=value ...`: sets frontmatter fields (`key=` removes one) and re-indexes, with validation.
+- `install-hook [--with-secret-scan]`: copies the scripts into `scripts/` and adds a marked block to
+  `.githooks/pre-commit` that runs `check` (and `secret_scan.py --staged`), keeping what's there.
 - Optional `issues/.backlog.toml` sets `statuses`, `priorities` and `done_sections` (Python 3.11+).
-- `backlog.py install-hook [--with-secret-scan]`: copies the scripts into `scripts/` and adds a marked
-  block to `.githooks/pre-commit` that runs `check` (and `secret_scan.py --staged`), keeping what's there.
-- `close`, `reopen` and `new` reject a `--date` that isn't YYYY-MM-DD.
-- plan and execute treat work that needs a machine or service the session can't reach (a production host,
-  `sudo`, a live service) as waiting on a person, not ready. New eval: `plan-holds-person-steps`.
-- GitHub Issues as the backlog: `sb-backlog github list` (via `gh api`, REST only) and `github from-json`
-  give the same JSON as the file backlog; priority from `P1`–`P3` labels or a `Priority:` body line,
-  `Depends on #N` lines, Needs checklists. Skills pick the backend from where the repo tracks work, and close
-  GitHub issues through `Fixes #N`. See `skills/backlog/references/github.md`.
-- `SECURITY.md`, issue templates (bug, idea, secret-scanner miss) and a pull request template.
-- Evals workflow: weekly and on demand, with the sandbox tools Bash cases need. New eval case: don't start
-  a file backlog in a repo that tracks work in GitHub Issues; execute must not `git add -A`.
-- drift-guard ships a starter `templates/check_manifest.py` (build, check, `--offline`), with tests.
+- `check` reports frontmatter it can't parse (indented lines, YAML lists) instead of misreading it;
+  `close`, `reopen` and `new` reject a malformed `--date`.
+
+**secret_scan.py** ([#8](https://github.com/AaronLWalker/starting-block/issues/8))
+- `--history` streams `git log` and reports line numbers; commits are named by 12 hex digits.
+- `--since <rev>`, `--baseline <file>` and `--write-baseline <file>` (location, rule and a SHA-256 of the
+  value; the value itself is never written). `--json` findings carry that `sha256`.
+- Runs `gitleaks` too when it's on PATH (not with `--staged`; `--no-gitleaks` turns it off).
+- New rules: Azure storage keys, GCP service-account files, npm, PyPI and Hugging Face tokens, Discord and
+  Telegram bot tokens.
+
+**Skills**
+- plan and execute treat work needing a machine or service the session can't reach (a production host,
+  `sudo`, a live service) as waiting on a person ([#4](https://github.com/AaronLWalker/starting-block/issues/4)).
+- drift-guard ships a starter `templates/check_manifest.py` (build, check, `--offline`).
+
+**Project**
+- `SECURITY.md`, issue templates and a pull request template.
+- Evals workflow, weekly and on demand ([#5](https://github.com/AaronLWalker/starting-block/issues/5)); new
+  eval cases `backlog-respects-existing-tracker` and `plan-holds-person-steps`; execute must not `git add -A`.
 - README states where the plugin runs: Claude Code on macOS, Linux and Windows, not claude.ai uploads.
 
 ## 0.1.0 (2026-10-24)
