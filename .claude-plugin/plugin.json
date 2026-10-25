@@ -1,7 +1,7 @@
 {
   "name": "starting-block",
   "displayName": "Starting Block",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Plan, refine and execute work from an issue backlog kept in the repo, plus guards that keep a repo publishable: secret scanning and drift checks for generated files.",
   "author": {
     "name": "Aaron Walker",

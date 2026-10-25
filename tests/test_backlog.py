@@ -671,7 +671,7 @@ class GitRepoTest(unittest.TestCase):
         (scripts / "secret_scan.py").write_text("print('old')\n")
         (scripts / "backlog.py").write_text("print('old')\n")
         self.assertEqual(self.warnings(), [
-            "scripts/{} differs from the plugin's copy ({}); re-run `sb-backlog install-hook` to update it".format(
+            "scripts/{} differs from the plugin's copy ({}); re-run `sb-backlog install-hook --force` to update it".format(
                 name, backlog.__version__) for name in ("backlog.py", "secret_scan.py")])
         with mock.patch.object(backlog, "__file__", str(scripts / "backlog.py")):
             self.assertEqual(self.warnings(), [])  # the repo's own copy is running

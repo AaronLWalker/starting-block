@@ -840,7 +840,7 @@ def repo_warnings(directory):
         if not repo_copy.is_file() or not ours.is_file() or same_file(repo_copy, ours):
             continue
         if repo_copy.read_bytes().replace(b"\r\n", b"\n") != ours.read_bytes().replace(b"\r\n", b"\n"):
-            warnings.append("scripts/{} differs from the plugin's copy ({}); re-run `sb-backlog install-hook` "
+            warnings.append("scripts/{} differs from the plugin's copy ({}); re-run `sb-backlog install-hook --force` "
                             "to update it".format(name, __version__))
     return warnings
 

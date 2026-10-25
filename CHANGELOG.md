@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.0 (2026-10-25)
 
 Fixes from running the plugin against a real ops repo, where `run` would have retried the same three
 host-only issues every day:
