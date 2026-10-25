@@ -49,6 +49,16 @@ def run(*argv):
     return code, out.getvalue()
 
 
+def toml_list(key, values):
+    """A TOML line `key = [...]`; JSON string escapes are valid TOML basic strings."""
+    return "{} = [{}]\n".format(key, ", ".join(json.dumps(v) for v in values))
+
+
+def py(code):
+    """A shell command that runs `code` with this Python (quoted: the path may have spaces)."""
+    return '"{}" -c "{}"'.format(sys.executable, code)
+
+
 def fails(*argv):
     """Run a command that should exit with an error; return the error message."""
     with contextlib.redirect_stdout(io.StringIO()):
@@ -329,6 +339,186 @@ class BacklogTest(unittest.TestCase):
             (self.dir / ".backlog.toml").write_text(text)
             self.assertIn(message, fails("--dir", str(self.dir), "check"), text)
 
+    def listing(self, *flags):
+        _, out = run("--dir", str(self.dir), "list", "--json", *flags)
+        return {d["number"]: d for d in json.loads(out)}
+
+    def test_runs_on_and_reachable(self):
+        self.write("001-a.md", extra="runs-on: host\n")
+        self.write("002-b.md", extra="runs-on: repo\n")
+        self.write("003-c.md", extra="runs-on: host, gpu\n")
+        self.write("004-d.md")
+        run("--dir", str(self.dir), "index")
+        self.assertEqual(self.check(), ([], []))
+        data = self.listing()
+        self.assertEqual((data["001"]["runs_on"], data["001"]["unreachable"]), (["host"], ["host"]))
+        self.assertFalse(data["001"]["ready"])
+        self.assertEqual((data["002"]["unreachable"], data["002"]["ready"]), ([], True))
+        self.assertEqual((data["004"]["runs_on"], data["004"]["unreachable"], data["004"]["ready"]), ([], [], True))
+        data = self.listing("--reachable", "HOST")
+        self.assertTrue(data["001"]["ready"])
+        self.assertEqual((data["003"]["unreachable"], data["003"]["ready"]), (["gpu"], False))
+        for flags in (["--reachable", "host,gpu"], ["--reachable", "host", "--reachable", "gpu"]):
+            self.assertTrue(self.listing(*flags)["003"]["ready"], flags)
+        _, out = run("--dir", str(self.dir), "list")
+        self.assertIn("[runs on host]", out)
+        self.assertIn("[runs on host, gpu]", out)
+        _, out = run("--dir", str(self.dir), "list", "--reachable", "host")
+        self.assertNotIn("runs on host", out)
+        self.assertIn("[runs on gpu]", out)
+
+    def test_hold_sets_flags_and_clears(self):
+        self.write("001-a.md")
+        run("--dir", str(self.dir), "index")
+        self.assertEqual(self.listing()["001"]["hold"], None)
+        code, _ = run("--dir", str(self.dir), "hold", "1", "--reason", "needs the production host",
+                      "--date", "2026-10-20")
+        self.assertEqual(code, 0)
+        text = (self.dir / "001-a.md").read_text()
+        self.assertIn("---\nstatus: open\nhold: 2026-10-20 needs the production host\npriority: P2\n", text)
+        data = self.listing()["001"]
+        self.assertEqual((data["hold"], data["ready"]), ("2026-10-20 needs the production host", False))
+        _, out = run("--dir", str(self.dir), "list")
+        self.assertIn("[on hold: needs the production host]", out)
+        self.assertEqual(self.check(), ([], []))
+        run("--dir", str(self.dir), "hold", "1", "--reason", "still stuck")
+        self.assertIn("hold: {} still stuck\n".format(backlog.today()), (self.dir / "001-a.md").read_text())
+        self.assertEqual((self.dir / "001-a.md").read_text().count("hold:"), 1)
+        self.assertEqual(run("--dir", str(self.dir), "set", "1", "hold=")[0], 0)
+        self.assertNotIn("hold", (self.dir / "001-a.md").read_text())
+        self.assertTrue(self.listing()["001"]["ready"])
+        self.assertEqual(self.check(), ([], []))
+
+    def test_hold_errors(self):
+        self.write("001-a.md")
+        self.write("002-b.md", status="closed", extra="closed: 2026-09-20\n", tail="\n## Resolution\nDone.\n")
+        run("--dir", str(self.dir), "index")
+        before = (self.dir / "001-a.md").read_text()
+        for flags, message in [
+            (["1", "--reason", "two\nlines"], "one line"),
+            (["1", "--reason", "a #b"], "starts a comment"),
+            (["1", "--reason", "  "], "can't be empty"),
+            (["1", "--reason", "x", "--date", "20 Oct"], "YYYY-MM-DD"),
+            (["2", "--reason", "x"], "is closed"),
+            (["9", "--reason", "x"], "No issue 009"),
+        ]:
+            self.assertIn(message, fails("--dir", str(self.dir), "hold", *flags), flags)
+        self.assertEqual((self.dir / "001-a.md").read_text(), before)
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertIn("2", fails("--dir", str(self.dir), "hold", "1"))  # --reason is required
+
+    def test_hold_on_a_closed_issue_warns(self):
+        self.write("001-a.md", status="closed", extra="closed: 2026-09-20\nhold: 2026-09-19 stuck\n",
+                   tail="\n## Resolution\nDone.\n")
+        run("--dir", str(self.dir), "index")
+        errors, warnings = self.check()
+        self.assertEqual(errors, [])
+        self.assertEqual(warnings, ["001-a.md: closed but still on hold; clear it with `set 001 hold=`"])
+        self.assertEqual(run("--dir", str(self.dir), "check")[0], 0)
+
+    def test_readme_template_describes_the_commands(self):
+        text = (self.dir / "README.md").read_text()
+        for word in ("sb-backlog new", "sb-backlog close", "sb-backlog list", "sb-backlog reopen",
+                     "sb-backlog hold", "runs-on", "hold:", "## Needs", "- [ ]"):
+            self.assertIn(word, text)
+
+    def test_init_refresh_readme_keeps_the_table_and_after(self):
+        readme = self.dir / "README.md"
+        self.write("001-a.md")
+        readme.write_text("# Old intro\n\nOld words.\n\n| # | Priority | Issue |\n|---|---|---|\n"
+                          "| [001](001-a.md) | P2 | A thing |\n\nFooter.\n")
+        _, out = run("--dir", str(self.dir), "init")
+        self.assertIn("left as is", out)
+        self.assertIn("Old words.", readme.read_text())
+        code, out = run("--dir", str(self.dir), "init", "--refresh-readme")
+        self.assertEqual(code, 0)
+        self.assertIn("Refreshed", out)
+        text = readme.read_text()
+        self.assertNotIn("Old", text)
+        template = backlog.README_TEMPLATE.format(head=backlog.TABLE_HEAD, rule=backlog.TABLE_RULE)
+        self.assertTrue(text.startswith(template), text)
+        self.assertTrue(text.endswith("| [001](001-a.md) | P2 | A thing |\n\nFooter.\n"), text)
+        self.assertEqual(self.check(), ([], []))
+        _, out = run("--dir", str(self.dir), "init", "--refresh-readme")
+        self.assertIn("Already current", out)
+        self.assertEqual(readme.read_text(), text)
+
+    def test_init_refresh_readme_needs_a_table(self):
+        readme = self.dir / "README.md"
+        readme.write_text("# Mine\n\nNo table here.\n")
+        self.assertIn("has no index table", fails("--dir", str(self.dir), "init", "--refresh-readme"))
+        self.assertEqual(readme.read_text(), "# Mine\n\nNo table here.\n")
+        readme.unlink()
+        self.assertIn("Created", run("--dir", str(self.dir), "init", "--refresh-readme")[1])
+
+    def test_version(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            with self.assertRaises(SystemExit) as e:
+                backlog.main(["--version"])
+        self.assertEqual(e.exception.code, 0)
+        self.assertEqual(out.getvalue().strip(), "backlog.py " + backlog.__version__)
+
+    def test_run_checks_without_checks(self):
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.assertEqual(run("--dir", str(self.dir), "run-checks")[0], 3)
+        self.assertIn("No checks configured", err.getvalue())
+
+    @unittest.skipIf(backlog.tomllib is None, "the config file needs tomllib (Python 3.11+)")
+    def test_config_reachable(self):
+        self.write("001-a.md", extra="runs-on: host\n")
+        self.write("002-b.md", extra="runs-on: gpu\n")
+        (self.dir / ".backlog.toml").write_text('reachable = ["host"]\n')
+        data = self.listing()
+        self.assertEqual((data["001"]["unreachable"], data["001"]["ready"]), ([], True))
+        self.assertEqual(data["002"]["unreachable"], ["gpu"])
+        self.assertTrue(self.listing("--reachable", "gpu")["002"]["ready"])
+        (self.dir / ".backlog.toml").write_text("reachable = []\nchecks = []\n")
+        self.assertFalse(self.listing()["001"]["ready"])
+
+    @unittest.skipIf(backlog.tomllib is None, "the config file needs tomllib (Python 3.11+)")
+    def test_config_reachable_and_checks_errors(self):
+        for text, message in [
+            ('reachable = "host"\n', "`reachable` must be a list of non-empty strings"),
+            ('reachable = [""]\n', "`reachable` must be a list of non-empty strings"),
+            ('reachable = ["a host"]\n', "must be one word"),
+            ('reachable = ["host", "host"]\n', "lists a value twice"),
+            ('checks = "make test"\n', "`checks` must be a list of non-empty strings"),
+            ('checks = ["make test", " "]\n', "`checks` must be a list of non-empty strings"),
+            ("checks = [1]\n", "`checks` must be a list of non-empty strings"),
+        ]:
+            (self.dir / ".backlog.toml").write_text(text)
+            self.assertIn(message, fails("--dir", str(self.dir), "check"), text)
+
+    @unittest.skipIf(backlog.tomllib is None, "the config file needs tomllib (Python 3.11+)")
+    def test_run_checks(self):
+        ok, ok2 = py("print(1)"), py("print(2)")
+        bad = py("import sys; [print(chr(97 + i)) for i in range(25)]; sys.exit(2)")
+        (self.dir / ".backlog.toml").write_text(toml_list("checks", [ok, bad, ok2]))
+        code, out = run("--dir", str(self.dir), "run-checks")
+        self.assertEqual(code, 1)
+        lines = out.splitlines()
+        self.assertEqual(lines[0], "PASS " + ok)
+        self.assertEqual(lines[1], "FAIL {} (exit 2)".format(bad))
+        self.assertEqual([l.strip() for l in lines[2:22]], [chr(97 + i) for i in range(5, 25)])
+        self.assertEqual(lines[22:], ["PASS " + ok2])
+        (self.dir / ".backlog.toml").write_text(toml_list("checks", [ok, ok]))
+        self.assertIn("lists a value twice", fails("--dir", str(self.dir), "run-checks"))
+        (self.dir / ".backlog.toml").write_text(toml_list("checks", [ok]))
+        self.assertEqual(run("--dir", str(self.dir), "run-checks"), (0, "PASS {}\n".format(ok)))
+        (self.dir / ".backlog.toml").write_text("checks = []\n")
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(run("--dir", str(self.dir), "run-checks")[0], 3)
+
+    @unittest.skipIf(backlog.tomllib is None, "the config file needs tomllib (Python 3.11+)")
+    def test_run_checks_replaces_undecodable_output(self):
+        bad = py("import sys; sys.stdout.buffer.write(bytes([255, 10])); sys.exit(1)")
+        (self.dir / ".backlog.toml").write_text(toml_list("checks", [bad]))
+        code, out = run("--dir", str(self.dir), "run-checks")
+        self.assertEqual(code, 1)
+        self.assertIn("\ufffd", out)
+
     def test_install_hook_needs_git(self):
         self.assertIn("isn't inside a git repository", fails("--dir", str(self.dir), "install-hook"))
 
@@ -425,6 +615,85 @@ class InstallHookTest(unittest.TestCase):
         self.git("add", "-A")
         result = self.git("commit", "-qm", "fixed")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+
+class GitRepoTest(unittest.TestCase):
+    """What depends on the repo around the backlog: `check`'s hook and stale-copy warnings, run-checks' cwd."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.root = Path(self.tmp)
+        for args in (["init", "-q"], ["config", "gc.auto", "0"], ["config", "maintenance.auto", "false"]):
+            subprocess.run(["git", *args], cwd=self.root, check=True)
+        self.dir = self.root / "issues"
+        run("--dir", str(self.dir), "init")
+        env = mock.patch.dict(os.environ)
+        env.start()
+        self.addCleanup(env.stop)
+        os.environ.pop("CI", None)
+
+    def tearDown(self):
+        remove_tree(self.tmp)
+
+    def warnings(self):
+        errors, warnings = backlog.check(self.dir)
+        self.assertEqual(errors, [])
+        return warnings
+
+    def git(self, *args):
+        subprocess.run(["git", *args], cwd=self.root, check=True)
+
+    def test_no_githooks_dir_no_warning(self):
+        self.assertEqual(self.warnings(), [])
+
+    def test_hooks_not_enabled(self):
+        (self.root / ".githooks").mkdir()
+        hint = "hooks in .githooks/ aren't enabled in this clone: git config core.hooksPath .githooks"
+        self.assertEqual(self.warnings(), [hint])
+        _, out = run("--dir", str(self.dir), "check")
+        self.assertIn("warning: " + hint, out)
+        self.git("config", "core.hooksPath", ".husky")
+        self.assertEqual(self.warnings(), [hint])
+        for value in (".githooks", "./.githooks", ".githooks/"):
+            self.git("config", "core.hooksPath", value)
+            self.assertEqual(self.warnings(), [], value)
+        self.git("config", "--unset", "core.hooksPath")
+        os.environ["CI"] = "true"
+        self.assertEqual(self.warnings(), [])
+
+    def test_stale_copies(self):
+        scripts = self.root / "scripts"
+        scripts.mkdir()
+        ours = Path(backlog.__file__).resolve().parent
+        (scripts / "backlog.py").write_bytes((ours / "backlog.py").read_bytes().replace(b"\n", b"\r\n"))
+        (scripts / "secret_scan.py").write_bytes((ours / "secret_scan.py").read_bytes())
+        self.assertEqual(self.warnings(), [])
+        (scripts / "secret_scan.py").write_text("print('old')\n")
+        (scripts / "backlog.py").write_text("print('old')\n")
+        self.assertEqual(self.warnings(), [
+            "scripts/{} differs from the plugin's copy ({}); re-run `sb-backlog install-hook` to update it".format(
+                name, backlog.__version__) for name in ("backlog.py", "secret_scan.py")])
+        with mock.patch.object(backlog, "__file__", str(scripts / "backlog.py")):
+            self.assertEqual(self.warnings(), [])  # the repo's own copy is running
+
+    @unittest.skipIf(backlog.tomllib is None, "the config file needs tomllib (Python 3.11+)")
+    def test_run_checks_runs_from_the_git_root(self):
+        (self.root / "marker").write_text("x")
+        (self.dir / ".backlog.toml").write_text(toml_list("checks", [
+            py("import os, sys; sys.exit(0 if os.path.exists('marker') else 1)")]))
+        cwd = os.getcwd()
+        try:
+            os.chdir(str(self.dir))
+            code, out = run("run-checks")
+        finally:
+            os.chdir(cwd)
+        self.assertEqual(code, 0, out)
+        self.assertTrue(out.startswith("PASS "), out)
+
+    def test_install_hook_leaves_nothing_to_warn_about(self):
+        run("--dir", str(self.dir), "install-hook", "--with-secret-scan")
+        self.git("config", "core.hooksPath", ".githooks")
+        self.assertEqual(self.warnings(), [])
 
 
 if __name__ == "__main__":

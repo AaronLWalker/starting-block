@@ -65,6 +65,23 @@ class NormalizeTest(unittest.TestCase):
         self.assertEqual((i["priority"], i["area"], i["owner"], i["status"]), ("P1", ["docs"], "ana", "closed"))
         self.assertEqual((i["opened"], i["closed"], i["file"]), ("2026-09-01", "2026-09-02", "https://x/4"))
 
+    def test_runs_on_labels(self):
+        i = self.one(labels=["P2", "runs-on:Host", "RUNS-ON: gpu", "docs"])
+        self.assertEqual((i["runs_on"], i["unreachable"], i["area"]), (["Host", "gpu"], ["Host", "gpu"], ["docs"]))
+        self.assertFalse(i["ready"])
+        i = gh.normalize([issue(1, labels=["runs-on:Host", "runs-on:gpu"])], reachable=["repo", "host"])[0]
+        self.assertEqual((i["unreachable"], i["ready"]), (["gpu"], False))
+        i = gh.normalize([issue(1, labels=["runs-on:host", "runs-on:gpu"])], reachable=["host", "GPU"])[0]
+        self.assertEqual((i["unreachable"], i["ready"]), ([], True))
+        i = self.one(labels=["runs-on:repo"])
+        self.assertEqual((i["runs_on"], i["unreachable"], i["ready"]), (["repo"], [], True))
+        i = self.one()
+        self.assertEqual((i["runs_on"], i["unreachable"], i["hold"]), ([], [], None))
+
+    def test_on_hold_label(self):
+        i = self.one(labels=["P1", "On-Hold", "bug"])
+        self.assertEqual((i["hold"], i["area"], i["ready"]), ("on-hold label", ["bug"], False))
+
     def test_crlf_bodies(self):
         self.assertTrue(self.one(body=DONE.replace("\n", "\r\n"))["ready"])
 
@@ -92,6 +109,39 @@ class CommandTest(unittest.TestCase):
             self.assertIn("no priority label", out.getvalue())
         finally:
             os.remove(path)
+
+
+    def test_from_json_reachable_and_flags(self):
+        data = [issue(1, labels=["P1", "runs-on:host"]), issue(2, labels=["P2", "on-hold"]),
+                issue(3, labels=["P3", "runs-on:gpu"])]
+        fd, path = tempfile.mkstemp(suffix=".json")
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(data, f)
+
+        def call(*flags):
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                self.assertEqual(gh.main(["from-json", path] + list(flags)), 0)
+            return out.getvalue()
+        try:
+            ready = {i["number"]: i["ready"] for i in json.loads(call("--json"))}
+            self.assertEqual(ready, {"#1": False, "#2": False, "#3": False})
+            for flags in (["--reachable", "host,gpu"], ["--reachable", "host", "--reachable", "gpu"]):
+                ready = {i["number"]: i["ready"] for i in json.loads(call("--json", *flags))}
+                self.assertEqual(ready, {"#1": True, "#2": False, "#3": True}, flags)
+            text = call()
+            self.assertIn("[runs on host]", text)
+            self.assertIn("[on hold: on-hold label]", text)
+            self.assertNotIn("no 'Done when'", text)
+            self.assertNotIn("runs on host", call("--reachable", "host"))
+        finally:
+            os.remove(path)
+
+    def test_version_matches_the_other_scripts(self):
+        import backlog
+        import secret_scan
+        self.assertEqual(gh.__version__, backlog.__version__)
+        self.assertEqual(gh.__version__, secret_scan.__version__)
 
 
 if __name__ == "__main__":
