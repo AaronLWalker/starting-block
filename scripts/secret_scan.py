@@ -8,6 +8,7 @@
   secret_scan.py --json              machine-readable findings
   secret_scan.py --baseline FILE     don't report the findings accepted in FILE
   secret_scan.py --write-baseline FILE   write every current finding to FILE
+  secret_scan.py --version           print the version
 
 Exits 1 when anything is found, 0 when clean or after --write-baseline.
 Matches are printed redacted. History is read from `git log` as it streams.
@@ -55,6 +56,8 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+
+__version__ = "0.4.0"
 
 RULES = [
     ("private-key", re.compile(r"-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP |ENCRYPTED )?PRIVATE KEY")),
@@ -414,6 +417,7 @@ def main(argv=None):
     ap.add_argument("--baseline", metavar="FILE", help="don't report findings listed in this baseline file")
     ap.add_argument("--write-baseline", metavar="FILE", help="write the current findings to FILE and exit 0")
     ap.add_argument("--no-gitleaks", action="store_true", help="don't run gitleaks, even if it's installed")
+    ap.add_argument("--version", action="version", version="secret_scan.py " + __version__)
     args = ap.parse_args(argv)
     try:
         root = Path(git("rev-parse", "--show-toplevel", cwd=args.path).strip())
