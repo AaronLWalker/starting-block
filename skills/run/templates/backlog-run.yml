@@ -12,6 +12,10 @@
 #    Backlog in issues/ files: the label is ignored; those files arrive through reviewed commits.
 # 4. Allowed tools: the run may use any shell command, on a throwaway runner that holds only this repo's
 #    token. Narrow --allowedTools to your test and build commands if you prefer.
+# 5. The plugin is pinned to PLUGIN_REF (a release tag). Bump it deliberately to take a new version.
+# 6. A runner can't reach your servers or devices. Issues that must happen there need `runs-on: host` (or a
+#    `runs-on:host` label) so the run skips them; refine sets it. List repo checks that work offline in
+#    issues/.backlog.toml `checks` so the run can tell a green baseline from a red one.
 
 name: Backlog run
 
@@ -27,6 +31,9 @@ on:
       budget:
         description: Most to spend on model calls in this run (USD)
         default: "20"
+      area:
+        description: Only issues in this area (blank for all)
+        default: ""
   schedule:
     - cron: "23 7 * * 1-5"   # weekdays 07:23 UTC
 
@@ -49,6 +56,8 @@ jobs:
       MAX: ${{ github.event.inputs.max || '3' }}
       LABEL: ${{ github.event.inputs.label || 'agent-ok' }}
       BUDGET: ${{ github.event.inputs.budget || '20' }}
+      AREA: ${{ github.event.inputs.area }}
+      PLUGIN_REF: v0.4.0
     steps:
       - uses: actions/checkout@v4
         with:
@@ -64,13 +73,13 @@ jobs:
       - name: Install Claude Code and the Starting Block plugin
         run: |
           npm install -g @anthropic-ai/claude-code
-          claude plugin marketplace add AaronLWalker/starting-block
+          claude plugin marketplace add "AaronLWalker/starting-block#$PLUGIN_REF"
           claude plugin install starting-block@starting-block
           git config user.name "backlog-run[bot]"
           git config user.email "backlog-run@users.noreply.github.com"
       - name: Work the backlog
         run: |
-          claude -p "/starting-block:run --pr --max $MAX --label $LABEL" \
+          claude -p "/starting-block:run --pr --max $MAX --label $LABEL${AREA:+ --area $AREA}" \
             --permission-mode acceptEdits \
             --allowedTools "Bash" "Read" "Write" "Edit" "Glob" "Grep" "Skill" "Agent" "TodoWrite" \
             --max-budget-usd "$BUDGET" | tee run-report.md

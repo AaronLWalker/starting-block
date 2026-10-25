@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased
+
+Fixes from running the plugin against a real ops repo, where `run` would have retried the same three
+host-only issues every day:
+
+- **`runs-on:`** marks issues whose work must happen elsewhere (a host, a device). They're `unreachable` and
+  not `ready` unless `.backlog.toml` `reachable` (or `list --reachable`) says this session can get there.
+- **Holds.** When `execute` stops for a reason that will still hold next time, it records why and runs
+  `sb-backlog hold N --reason ...`; held issues aren't `ready`. GitHub: an `on-hold` label. In PR mode the
+  hold goes in its own `issue-NNN-hold` PR, and runs skip issues that already have an `issue-NNN-*` branch.
+- **`run`**: `--max` counts attempts; `stopped` (issue held) never counts as a failure; `failed` (outside
+  the issue) stops the run at once when it's the run's own setup, else after two in a row.
+- **Checks:** `.backlog.toml` `checks = [...]` and `sb-backlog run-checks`; `check` warns when `.githooks/`
+  isn't enabled in the clone or when copies in `scripts/` differ from the plugin's.
+- **Safety:** rules no repo overrides (stage by name, no `--no-verify`, no push or merge unasked, no
+  secrets, no Needs steps); a protected list handed to every subagent; unattended runs run no
+  `docker`/`systemctl`/`sudo`/deploy command unless the issue lists it under `## Allowed commands`.
+- Scripts carry `__version__` and `--version`; `init --refresh-readme` rewrites `issues/README.md`'s
+  conventions text; the Actions template pins the plugin version and takes an `area` input.
+
 ## 0.3.0 (2026-10-24)
 
 - New `run` skill ([#18](https://github.com/AaronLWalker/starting-block/issues/18)): works the ready issues

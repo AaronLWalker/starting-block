@@ -25,6 +25,8 @@ area: api, docs       # optional, comma-separated, the repo's own words (in a mo
 opened: 2026-09-14
 depends: 004, 012     # optional; these must close first
 owner: sam            # optional; who's working on it
+runs-on: host         # optional; where the work must happen, if not in the repo (see workflow.md)
+hold: 2026-10-25 needs the SMTP password   # optional; set by `sb-backlog hold` when an agent stopped
 ---
 ```
 
@@ -37,10 +39,16 @@ lines.
 | **P2** | Worth doing: a visible defect or a clear improvement. |
 | **P3** | Tidy-up: cleanup, docs, small inconsistencies. |
 
-A repo can change these words in `issues/.backlog.toml`: `statuses` (must include `"open"` and
-`"closed"`), `priorities` (highest first) and `done_sections` (heading prefixes that count as Done when),
-e.g. `priorities = ["P0", "P1", "P2"]`. Keys it leaves out keep the defaults above. Reading it needs
-Python 3.11 or later.
+`issues/.backlog.toml` (optional; reading it needs Python 3.11 or later) tunes the backlog:
+
+```toml
+priorities = ["P0", "P1", "P2"]   # highest first (default P1, P2, P3)
+reachable = ["host"]               # places this repo's sessions can reach (default: only the repo)
+checks = ["python3 -m pytest -q", "python3 scripts/landing-page.py check --offline"]  # sb-backlog run-checks
+```
+
+It also takes `statuses` (must include `"open"` and `"closed"`) and `done_sections` (heading prefixes that
+count as Done when). Keys it leaves out keep their defaults.
 
 ## Body
 
@@ -52,6 +60,7 @@ A `# Title` line, then the sections that apply, in this order:
 | `## Proposed fix` | always | Concrete steps naming the files or settings. With several options, number them and recommend one. |
 | `## Needs <someone>` | if any | Steps only a person can take, as a checklist (`- [ ] ...`). Agents stop here until every box is ticked (`- [x]`). |
 | `## Done when` | always | Observable checks: a command and what it prints, a test that passes, a page that loads. Not "it works". |
+| `## Allowed commands` | if any | Exact commands that change a running system (a restart, a deploy) which an unattended run may use for this issue. Nothing else of that kind runs unattended. |
 | `## Verify` | risky changes | How to confirm the change in the running system. |
 | `## Roll back` | risky changes | The exact steps to undo it. |
 | `## Progress (YYYY-MM-DD)` | multi-session work | Dated facts: what's done, what was found, what's left. |

@@ -97,18 +97,29 @@ How the skills commit, close issues and handle teams and pull requests: [workflo
 
 ## Running the backlog unattended
 
-`/starting-block:run` works the ready issues in order. Each issue gets a fresh subagent running `execute`,
-and the run stops at `--max N` issues (default 5), after two failures in a row, or if your tests are already
-failing. Issues it can't finish stay open with a dated note saying why. It never does a person's steps,
-never pushes to your default branch, and never merges.
+`/starting-block:run` works the ready issues in order. Each issue gets a fresh subagent running `execute`.
+The run stops after `--max N` issues attempted (default 5), when nothing ready is left, after two failures
+in a row, or at once if your checks are already failing or its own setup breaks (a denied tool, a refused
+push). It never does a person's steps, never pushes to your default branch, and never merges.
 
-- **Local:** commits each issue on the current branch. From a terminal or cron, in a dedicated clone:
-  `claude -p "/starting-block:run --max 3" --permission-mode acceptEdits --allowedTools Bash Read Write Edit Glob Grep Skill Agent`.
-  (Narrower Bash rules must cover your tests, `git` and `sb-backlog`, or issues stop on a permission denial.)
-- **Pull requests:** `--pr` gives each issue its own branch and PR for you to review.
+**It doesn't retry what it can't do.** When an issue needs a person, a decision, or a machine the run can't
+reach, `execute` records why on the issue and puts it on hold (`hold:` in the file, or an `on-hold` label);
+the next run skips it until someone clears the hold. Mark work that has to happen on a server or device
+with `runs-on: host` and runs skip it from the start.
+
+**Tell it how to check the repo** in `issues/.backlog.toml`, so it can tell a green tree from a red one:
+`checks = ["npm test", "npm run lint"]`. Unattended, it runs no command that changes a running system
+(`docker`, `systemctl`, `sudo`, deploys) unless the issue lists it under `## Allowed commands`.
+
+- **Local:** commits each issue on the current branch. From a terminal or cron, in a dedicated clone (not on
+  a production host): `claude -p "/starting-block:run --max 3" --permission-mode acceptEdits --allowedTools Bash Read Write Edit Glob Grep Skill Agent`.
+  (Narrower Bash rules must cover your checks, `git` and `sb-backlog`, or issues fail on a permission denial.)
+- **Pull requests:** `--pr` gives each issue its own branch and PR for you to review. Issues that already have
+  an `issue-NNN-*` branch on the remote are skipped, so a daily run doesn't redo work awaiting review.
 - **On a schedule:** copy [`skills/run/templates/backlog-run.yml`](skills/run/templates/backlog-run.yml) to
-  `.github/workflows/`. It runs weekdays in PR mode, with a cost cap; the comments at its top cover the API
-  key and token secrets.
+  `.github/workflows/`. It runs weekdays in PR mode with a cost cap and a pinned plugin version; the comments
+  at its top cover the secrets. A runner can't reach your servers, so it suits repos whose work is in the
+  repo; for an ops repo, it will only pick the repo-only issues.
 - **GitHub Issues on a public repo:** anyone can open an issue, and its text becomes Claude's instructions.
   The run only works issues carrying a label you apply (`--label agent-ok`); only people with triage
   rights can add labels.

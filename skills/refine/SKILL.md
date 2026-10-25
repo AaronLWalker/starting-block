@@ -35,6 +35,12 @@ execution, not checking. Don't.
   recommend one.
 - **Needs <who>**: a `- [ ]` checklist of everything that takes the person's account, money, credentials,
   admin rights, devices, or a decision that's theirs.
+- **Where it runs**: if any step must happen somewhere this repo's sessions can't reach (a production host,
+  a device, a live service), set `runs-on` (`sb-backlog set N runs-on=host`). If a step must run a
+  command that changes a running system, list the exact commands under `## Allowed commands`; unattended
+  runs run nothing else of that kind.
+- **Hold**: if the issue is on `hold` and you've fixed the reason (e.g. added the missing Done when), clear
+  it with `sb-backlog set N hold=`.
 - **Done when**: checks you can observe: a command and its expected output, a test, a page.
 - **Verify** and **Roll back**: when a step restarts, migrates, deletes or publishes anything.
 - **Split** an issue with more than one independent outcome into several (`sb-backlog new`, linked with

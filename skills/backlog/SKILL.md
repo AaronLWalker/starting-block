@@ -17,7 +17,10 @@ sb-backlog new --title "..." --priority P2 --area api   # create from the templa
 sb-backlog close 7 --resolution "Fixed in #123"         # status, closed date, Resolution, index
 sb-backlog reopen 7                  # status open, drop closed:, Resolution becomes Earlier resolution (date)
 sb-backlog set 7 priority=P1 owner=sam                  # frontmatter fields (`key=` removes one), index
-sb-backlog install-hook              # copy the script to scripts/, run check from .githooks/pre-commit
+sb-backlog hold 7 --reason "needs the SMTP password"    # agents skip it until `set 7 hold=` clears it
+sb-backlog run-checks                # run the repo's checks listed in issues/.backlog.toml
+sb-backlog install-hook              # copy the scripts to scripts/, run check from .githooks/pre-commit
+sb-backlog init --refresh-readme     # rewrite issues/README.md's conventions text, keep the index
 sb-backlog index                     # rewrite the README index table from the files
 sb-backlog check                     # fail on malformed files or a stale index; --strict fails on warnings too
 ```
