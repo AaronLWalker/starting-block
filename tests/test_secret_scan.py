@@ -127,6 +127,16 @@ class ScanLineTest(unittest.TestCase):
         self.assertEqual(secret_scan.scan_document(enumerate(empty, 1)), [])
 
 
+class VersionTest(unittest.TestCase):
+    def test_version_flag(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            with self.assertRaises(SystemExit) as e:
+                secret_scan.main(["--version"])
+        self.assertEqual(e.exception.code, 0)
+        self.assertEqual(out.getvalue().strip(), "secret_scan.py " + secret_scan.__version__)
+
+
 class HistoryParseTest(unittest.TestCase):
     def test_groups_added_lines_by_file(self):
         commit = "a" * 40

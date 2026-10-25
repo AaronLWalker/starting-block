@@ -16,7 +16,7 @@ skip this. No backlog at all: say so and offer the `backlog` skill to set one up
 ## 2. Look at each open issue
 
 `sb-backlog list --json` (or `sb-backlog github list --json`) gives each open issue's priority,
-`open_depends`, unticked `needs_human` sections, and a `ready` flag. Those are a start, not the verdict.
+`open_depends`, unticked `needs_human` sections, `unreachable` places, any `hold`, and a `ready` flag. Those are a start, not the verdict.
 Read each issue and check it against the repo (workflow.md, "Is the problem still there?"). Then classify
 it as one of:
 
@@ -26,7 +26,8 @@ it as one of:
 | Ready | Facts hold, Done when is observable, nothing blocks it, and you can do every step from this session | execute |
 | Needs refinement | No Done when, vague, or stale facts | refine |
 | Blocked | An issue in `depends` is open | do the blocker first |
-| Needs a person | Any step needs the person: a Needs checklist, or admin rights, credentials, a device, a decision, or access to a machine or service this session can't reach | ask them |
+| Needs a person | Any step needs the person: a Needs checklist, or admin rights, credentials, a device, a decision, or access to a machine or service this session can't reach (`unreachable`) | ask them; propose `runs-on` or a Needs checklist if the issue lacks them, so `run` won't pick it |
+| On hold | An agent stopped on it before (`hold`) | check whether the reason still holds; propose clearing it |
 | Duplicate | Another issue covers it | propose merging into the older one |
 
 With more than about 15 open issues, split the checking across parallel subagents, one per area.

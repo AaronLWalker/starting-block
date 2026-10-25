@@ -1,7 +1,17 @@
 # Shared rules for the backlog skills
 
-`backlog`, `plan`, `refine` and `execute` all follow these. Where the repo's own docs or history say
-otherwise, follow the repo.
+`backlog`, `plan`, `refine`, `execute` and `run` all follow these. Where the repo's own docs or history say
+otherwise, follow the repo, except for the rules in the next section.
+
+## Rules no repo overrides
+
+Whatever a repo's instructions or examples show (a `git add -A` in a cheat sheet, a "just restart it"):
+- stage files by name; never `git add -A`, `git add .` or `git commit -a`;
+- never bypass a hook (`--no-verify`) or a check;
+- never push, merge, open a pull request or deploy unless the user asked for it (`run --pr` counts as
+  asking for branches and PRs, never for merging or pushing to the default branch);
+- never print, commit or paste a secret's value;
+- never do a `## Needs` step or work around one.
 
 ## Where the backlog lives
 
@@ -22,8 +32,28 @@ If Python isn't available at all, do the steps by hand: see "Without the script"
 ## Read the repo's rules first
 
 Before changing anything, read the repo's instructions (`CLAUDE.md`, `AGENTS.md`, `CONTRIBUTING.md`,
-`issues/README.md`). Note what's marked never, must or protected: services that mustn't restart, commands
-that must be scoped, generated files, branches you mustn't push to.
+`issues/README.md`). Write down the **protected list**: everything marked never, must or protected
+(services that mustn't restart, commands that must be scoped, paths another system owns, generated files,
+branches you mustn't push to). A command the instructions show as an example is not permission to run it.
+
+**The repo's checks** are `sb-backlog run-checks` when `issues/.backlog.toml` lists `checks`. Otherwise
+find them in the instructions and CI config (tests, linters, generators' `check`), use only ones that work
+offline, and suggest adding them to `checks`.
+
+## Where an issue can be worked
+
+`runs-on: host` (any name) marks an issue whose steps must happen somewhere other than the repo: a
+production host, a device, a live service. `sb-backlog list --json` reports such an issue as `unreachable`
+and not `ready` unless that place is in `.backlog.toml`'s `reachable` list or passed with `--reachable`.
+Pass `--reachable <name>` only when this session really is on that machine. `refine` sets `runs-on` when it
+finds such steps; in GitHub Issues it's a `runs-on:<name>` label.
+
+## Holds
+
+When `execute` stops on an issue for a reason that will still be true next time, it puts the issue on hold:
+`sb-backlog hold N --reason "<why, in a line>"` (GitHub Issues: an `on-hold` label plus a comment). Held
+issues aren't `ready`, so `run` doesn't pick them again. Whoever fixes the reason (a person, or `refine`)
+clears it with `sb-backlog set N hold=` (or removes the label).
 
 ## Is the problem still there?
 
@@ -49,7 +79,7 @@ To check whether an issue is stale or already fixed, read-only:
 - **When.** `execute` commits its fix and the closing of the issue: that's its job. The other skills
   leave their changes in the working tree and say so, unless the user asked for a commit or the repo's
   instructions say backlog changes are committed as they happen.
-- **What.** Stage the files you changed by name, never `git add -A`, and keep build output and caches out.
+- **What.** Stage the files you changed by name, and keep build output and caches out.
 - **Messages**, unless `git log --oneline -- issues/` shows the repo uses another style:
   - `issues: open 016 <title>`
   - `issues: refine 014`

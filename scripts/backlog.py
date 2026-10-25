@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
 """Manage an in-repo issue backlog: one Markdown file per issue.
 
-  init                 create the backlog directory and its README (conventions + index)
-  list                 list issues (--status, --priority, --area, --json)
+  init                 create the backlog directory and its README (conventions + index);
+                       --refresh-readme rewrites an existing README's text above the index table
+  list                 list issues (--status, --priority, --area, --reachable, --json)
   next                 print the next free issue number
   new                  create an issue from the template and add it to the index
   close N              mark issue N closed, optionally add a Resolution
   reopen N             mark issue N open again; its Resolution becomes an Earlier resolution
+  hold N --reason ...  put issue N on hold (`hold: <date> <reason>`); `set N hold=` clears it
   set N key=value ...  set frontmatter fields (`key=` removes one) and update the index
   index                rewrite the README's index table from the issue files
   check                fail if any issue file or the index is malformed or out of step
+  run-checks           run the `checks` commands from .backlog.toml at the git root; exit 1 if any fail
   install-hook         copy this script into the repo's scripts/ and run `check` from
                        .githooks/pre-commit (--with-secret-scan adds secret_scan.py --staged)
   github list          the same listing from GitHub Issues instead (see backlog_github.py)
@@ -24,6 +27,8 @@ Each issue is `NNN-short-slug.md` with a frontmatter block, one `key: value` per
   opened: 2026-09-14
   closed: 2026-09-20      # required once status is closed
   depends: 004, 012       # optional: issues that must close first
+  runs-on: host           # optional: where the work must happen ("repo" is always reachable)
+  hold: 2026-09-15 needs the production database   # optional: an agent stopped here; don't retry
   ---
 
   # Title in plain English
@@ -32,12 +37,21 @@ followed by sections such as Problem, Proposed fix, Done when, Progress, Resolut
 A section whose heading starts with "Needs" (e.g. "## Needs the account holder")
 holds steps only a person can do; it stops blocking once every step is ticked (`- [x]`).
 
+An issue is ready (`list --json`) when it's open, has a Done when, no open depends, no
+unticked Needs, no hold, and every runs-on place is reachable: "repo", the config's
+`reachable`, or a `list --reachable NAME` (for a session running somewhere else, e.g. the host).
+
 An optional `.backlog.toml` in the backlog directory changes the vocabulary
 (read with tomllib, so it needs Python 3.11+):
 
   statuses = ["open", "in-progress", "closed"]   # must include "open" and "closed"
   priorities = ["P0", "P1", "P2", "P3"]          # highest first
   done_sections = ["Done when", "Acceptance"]    # heading prefixes that count as Done when
+  reachable = ["host"]                           # runs-on places this checkout can work in (default [])
+  checks = ["python3 -m unittest"]               # shell commands for run-checks, run from the git root
+
+`check` also warns when the repo has .githooks/ but this clone doesn't use it (unless $CI is set),
+and when the repo's scripts/backlog.py or scripts/secret_scan.py differs from this copy.
 
 Standard library only. The backlog directory is --dir, else $BACKLOG_DIR, else
 `issues/` (or an existing `backlog/`) at the git root.
@@ -58,6 +72,8 @@ try:
 except ImportError:  # Python 3.9 and 3.10
     tomllib = None
 
+__version__ = "0.4.0"
+
 STATUSES = ("open", "closed")
 PRIORITIES = ("P1", "P2", "P3")
 DONE_SECTIONS = ("Done when", "Close when", "Acceptance")
@@ -77,16 +93,24 @@ README_TEMPLATE = """# Issues
 Issues live here as files: one Markdown file per issue, versioned with the code they're about.
 Format and conventions: https://github.com/AaronLWalker/starting-block
 
-- **Open one:** `sb-backlog new --title "..." --priority P2` (or `python3 <plugin>/scripts/backlog.py new ...`),
-  or copy an existing file, give it the next number and set `status: open`.
-- **Close one:** set `status: closed`, add `closed: YYYY-MM-DD` and a `## Resolution` saying what fixed it
-  (a commit hash or pull request). Leave the file in place so the history stays findable.
-- **List open issues:** `sb-backlog list`
+- **Open one:** `sb-backlog new --title "..." --priority P2`, or copy an existing file, give it the next
+  number and set `status: open`.
+- **Close one:** `sb-backlog close N --resolution "Fixed in <commit or pull request>."` sets `status: closed`
+  and the `closed:` date and adds a `## Resolution`. Leave the file in place so the history stays findable.
+- **Reopen one:** `sb-backlog reopen N`; the old Resolution is kept as an Earlier resolution.
+- **Put one on hold:** `sb-backlog hold N --reason "..."`; `sb-backlog set N hold=` clears it.
+- **List open issues:** `sb-backlog list` (`--json` for scripts); `sb-backlog check` validates the files and this index.
+
+Without the plugin's `sb-backlog`, run `python3 <plugin>/scripts/backlog.py` the same way.
 
 Priority: **P1** fix soon (risk or blocking), **P2** worth doing, **P3** tidy-up.
 
-A `## Needs <someone>` section is a checklist of steps only a person can do (an account setting, a
-purchase, a credential, a decision). Agents stop there until every box is ticked.
+A `## Needs <someone>` section is a checklist (`- [ ] step`) of steps only a person can do (an account
+setting, a purchase, a credential, a decision). Agents stop there until every box is ticked (`- [x]`).
+
+`runs-on: host` in the frontmatter says where the work must happen, so agents that can't reach it skip the
+issue. `hold: YYYY-MM-DD <reason>` means an agent stopped on the issue; it isn't retried until someone
+clears the hold.
 
 {head}
 {rule}
@@ -163,11 +187,21 @@ class Issue:
         return outstanding
 
     @property
+    def runs_on(self):
+        return split_list(self.meta.get("runs-on", ""))
+
+    @property
+    def hold(self):
+        """The `hold:` value (`<date> <reason>`), or None when the issue isn't on hold."""
+        return self.meta.get("hold") or None
+
+    @property
     def has_done_when(self):
         return any(self.done_re.match(s) for s in self.sections)
 
-    def to_dict(self, by_number):
+    def to_dict(self, by_number, reachable=("repo",)):
         open_deps = [d for d in self.depends if d in by_number and by_number[d].status != "closed"]
+        unreachable = unreachable_places(self.runs_on, reachable)
         return {
             "number": self.number,
             "file": self.file,
@@ -181,12 +215,28 @@ class Issue:
             "open_depends": open_deps,
             "sections": self.sections,
             "needs_human": self.needs,
-            "ready": self.status == "open" and self.has_done_when and not open_deps and not self.needs,
+            "runs_on": self.runs_on,
+            "unreachable": unreachable,
+            "hold": self.hold,
+            "ready": (self.status == "open" and self.has_done_when and not open_deps and not self.needs
+                      and not unreachable and not self.hold),
         }
 
 
 def split_list(value):
     return [v.strip() for v in re.split(r"[,\s]+", value.strip("[] ")) if v.strip()]
+
+
+def unreachable_places(runs_on, reachable):
+    """The `runs_on` places not in `reachable` (any case); "repo" is always reachable."""
+    have = {r.lower() for r in reachable} | {"repo"}
+    return [r for r in runs_on if r.lower() not in have]
+
+
+def hold_reason(hold):
+    """The reason part of a `hold:` value, without its leading date."""
+    date, _, rest = hold.partition(" ")
+    return rest.strip() if valid_date(date) and rest.strip() else hold
 
 
 def done_re(prefixes):
@@ -230,7 +280,8 @@ def parse_frontmatter(text):
 
 def load_config(directory):
     """Read `.backlog.toml` from the backlog directory, with the defaults for anything it leaves out."""
-    config = {"statuses": STATUSES, "priorities": PRIORITIES, "done_sections": DONE_SECTIONS}
+    config = {"statuses": STATUSES, "priorities": PRIORITIES, "done_sections": DONE_SECTIONS,
+              "reachable": (), "checks": ()}
     path = Path(directory) / CONFIG_FILE
     if path.is_file():
         if tomllib is None:
@@ -244,13 +295,15 @@ def load_config(directory):
         for key, value in data.items():
             if key not in config:
                 sys.exit("{}: unknown key `{}` (expected {})".format(path, key, ", ".join(sorted(config))))
-            if not isinstance(value, list) or not value \
+            may_be_empty = key in ("reachable", "checks")
+            if not isinstance(value, list) or not (value or may_be_empty) \
                     or not all(isinstance(v, str) and v.strip() for v in value):
-                sys.exit("{}: `{}` must be a non-empty list of strings".format(path, key))
+                sys.exit("{}: `{}` must be a {}".format(
+                    path, key, "list of non-empty strings" if may_be_empty else "non-empty list of strings"))
             value = tuple(v.strip() for v in value)
             if len(set(value)) != len(value):
                 sys.exit("{}: `{}` lists a value twice".format(path, key))
-            if key != "done_sections":
+            if key in ("statuses", "priorities", "reachable"):
                 bad = [v for v in value if not WORD_RE.match(v) or v == "all"]
                 if bad:
                     sys.exit("{}: `{}` value `{}` must be one word (letters, digits, `-`, `_`, `.`) "
@@ -449,12 +502,34 @@ def cmd_init(args):
     d = backlog_dir(args.dir)
     d.mkdir(parents=True, exist_ok=True)
     readme = d / "README.md"
-    if readme.exists():
+    template = README_TEMPLATE.format(dirname=d.name, head=TABLE_HEAD, rule=TABLE_RULE)
+    if readme.exists() and args.refresh_readme:
+        current = readme.read_text(encoding="utf-8")
+        lines = current.splitlines()
+        span = find_table(lines)
+        if not span:
+            sys.exit("{} has no index table (`{}`), so there's nothing to keep; left as is. "
+                     "Run `index` to add one first.".format(readme, TABLE_HEAD))
+        new = "\n".join(template.splitlines()[:find_table(template.splitlines())[0]] + lines[span[0]:]) + "\n"
+        if same_text(current, new):
+            print("Already current: {}".format(readme))
+        else:
+            write_file(readme, new)
+            print("Refreshed the text above the index in {}".format(readme))
+    elif readme.exists():
         print("{} already exists; left as is.".format(readme))
     else:
-        write_file(readme, README_TEMPLATE.format(dirname=d.name, head=TABLE_HEAD, rule=TABLE_RULE))
+        write_file(readme, template)
         print("Created {}".format(readme))
     return 0
+
+
+def reachable_places(config, extra):
+    """Where this call can work: "repo", the config's `reachable`, and each --reachable (comma lists too)."""
+    places = ["repo"] + list(config["reachable"])
+    for value in extra or []:
+        places += split_list(value)
+    return places
 
 
 def cmd_list(args):
@@ -466,6 +541,7 @@ def cmd_list(args):
         sys.exit("--status must be one of " + ", ".join(config["statuses"] + ("all",)))
     if args.priority and args.priority not in prios:
         sys.exit("--priority must be one of " + ", ".join(prios))
+    reachable = reachable_places(config, args.reachable)
     issues, _ = load(d, config)
     by_number = {i.number: i for i in issues}
     sel = [i for i in issues
@@ -474,15 +550,19 @@ def cmd_list(args):
            and (not args.area or args.area in i.areas)]
     sel.sort(key=lambda i: (prios.index(i.priority) if i.priority in prios else len(prios), int(i.number)))
     if args.json:
-        print(json.dumps([i.to_dict(by_number) for i in sel], indent=2))
+        print(json.dumps([i.to_dict(by_number, reachable) for i in sel], indent=2))
         return 0
     for i in sel:
-        info = i.to_dict(by_number)
+        info = i.to_dict(by_number, reachable)
         flags = []
         if info["open_depends"]:
             flags.append("blocked by " + ", ".join(info["open_depends"]))
         if info["needs_human"]:
             flags.append("needs a person")
+        if info["unreachable"]:
+            flags.append("runs on " + ", ".join(info["unreachable"]))
+        if info["hold"]:
+            flags.append("on hold: " + hold_reason(info["hold"]))
         if i.status == "open" and not i.has_done_when:
             flags.append("no 'Done when'")
         print("{}  {:2}  {:6}  {}{}".format(i.number, i.priority, i.status, i.title,
@@ -554,6 +634,29 @@ def cmd_reopen(args):
             lines[k] = "## Earlier resolution ({})".format(date)
     write_file(issue.path, "\n".join(lines) + "\n")
     issues, _ = load(d)
+    write_index(d, issues)
+    print(issue.path)
+    return 0
+
+
+def cmd_hold(args):
+    d = backlog_dir(args.dir)
+    require_dir(d)
+    config = load_config(d)
+    issues, _ = load(d, config)
+    issue = find_issue(d, issues, args.number)
+    reason = args.reason.strip()
+    if not reason:
+        sys.exit("--reason can't be empty: say why the issue is on hold")
+    if "\n" in reason or "\r" in reason or re.search(r"\s#", reason):
+        sys.exit("--reason must be one line, without ` #` (that starts a comment)")
+    if issue.status == "closed":
+        sys.exit("Issue {} is closed; only an open issue can be put on hold.".format(issue.number))
+    date = check_date("--date", args.date) if args.date else today()
+    text = set_meta(issue.text, {"hold": "{} {}".format(date, reason)})
+    if text != issue.text:
+        write_file(issue.path, text)
+    issues, _ = load(d, config)
     write_index(d, issues)
     print(issue.path)
     return 0
@@ -673,6 +776,9 @@ def check(directory, config=None):
                 errors.append("{}: closed before it was opened".format(where))
             if "Resolution" not in i.sections:
                 warnings.append("{}: closed without a `## Resolution`".format(where))
+            if i.hold:
+                warnings.append("{}: closed but still on hold; clear it with `set {} hold=`".format(
+                    where, i.number))
         elif i.status in statuses:
             if i.meta.get("closed"):
                 errors.append("{}: {}, but has a `closed:` date".format(where, i.status))
@@ -701,7 +807,42 @@ def check(directory, config=None):
             if not detail:
                 detail.append("a title, priority or status differs from the files")
             errors.append("README.md index is out of date ({}); run `backlog.py index`".format("; ".join(detail)))
-    return errors, warnings
+    return errors, warnings + repo_warnings(directory)
+
+
+def hooks_path_is_ours(value, root):
+    return value.replace("\\", "/").rstrip("/") in (".githooks", "./.githooks", (root / ".githooks").as_posix())
+
+
+def same_file(a, b):
+    try:
+        return os.path.samefile(str(a), str(b))
+    except OSError:
+        return False
+
+
+def repo_warnings(directory):
+    """Warnings about the git repo holding the backlog: hooks not enabled, stale copies of the scripts."""
+    top = git(["rev-parse", "--show-toplevel"], directory)
+    if not top:
+        return []
+    root = Path(top)
+    warnings = []
+    if (root / ".githooks").is_dir() and not os.environ.get("CI"):
+        hooks_path = git(["config", "--get", "core.hooksPath"], root)
+        if not hooks_path or not hooks_path_is_ours(hooks_path, root):
+            warnings.append("hooks in .githooks/ aren't enabled in this clone: git config core.hooksPath .githooks")
+    here = Path(__file__).resolve()
+    if same_file(here, root / "scripts" / "backlog.py"):
+        return warnings  # this is the repo's copy running (e.g. from the pre-commit hook)
+    for name in ("backlog.py", "secret_scan.py"):
+        repo_copy, ours = root / "scripts" / name, here.parent / name
+        if not repo_copy.is_file() or not ours.is_file() or same_file(repo_copy, ours):
+            continue
+        if repo_copy.read_bytes().replace(b"\r\n", b"\n") != ours.read_bytes().replace(b"\r\n", b"\n"):
+            warnings.append("scripts/{} differs from the plugin's copy ({}); re-run `sb-backlog install-hook --force` "
+                            "to update it".format(name, __version__))
+    return warnings
 
 
 def cmd_check(args):
@@ -715,6 +856,31 @@ def cmd_check(args):
     if not errors and not warnings:
         print("Backlog OK: {}".format(d))
     return 1 if errors or (args.strict and warnings) else 0
+
+
+def cmd_run_checks(args):
+    d = backlog_dir(args.dir)
+    require_dir(d)
+    checks = load_config(d)["checks"]
+    if not checks:
+        print("No checks configured: add `checks = [\"<command>\", ...]` to {}".format(d / CONFIG_FILE),
+              file=sys.stderr)
+        return 3
+    top = git(["rev-parse", "--show-toplevel"], d)
+    root = Path(top) if top else Path.cwd()
+    failed = 0
+    for command in checks:
+        result = subprocess.run(command, shell=True, cwd=str(root), stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace")
+        if result.returncode == 0:
+            print("PASS {}".format(command))
+        else:
+            failed += 1
+            print("FAIL {} (exit {})".format(command, result.returncode))
+            for line in (result.stdout or "").splitlines()[-20:]:
+                print("    " + line)
+        sys.stdout.flush()
+    return 1 if failed else 0
 
 
 def hook_block(rel, secret_scan):
@@ -819,10 +985,9 @@ def cmd_install_hook(args):
         print("{} .githooks/pre-commit".format("Updated" if existing else "Wrote"))
     os.chmod(str(hook), os.stat(str(hook)).st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
     hooks_path = git(["config", "--get", "core.hooksPath"], root)
-    ours = (".githooks", "./.githooks", (root / ".githooks").as_posix())
     if not hooks_path:
         print("Enable it once per clone:  git config core.hooksPath .githooks")
-    elif hooks_path.replace("\\", "/").rstrip("/") in ours:
+    elif hooks_path_is_ours(hooks_path, root):
         print("core.hooksPath is already .githooks.")
     else:
         print("core.hooksPath is set to `{}`, so git won't run .githooks/pre-commit. Left as is: point it at "
@@ -843,14 +1008,20 @@ def main(argv=None):
         return backlog_github.main(argv[1:])
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--dir", help="backlog directory (default: $BACKLOG_DIR, else issues/ at the git root)")
+    ap.add_argument("--version", action="version", version="backlog.py " + __version__)
     sub = ap.add_subparsers(dest="cmd", required=True)
 
-    sub.add_parser("init", help="create the backlog directory and README")
+    p = sub.add_parser("init", help="create the backlog directory and README")
+    p.add_argument("--refresh-readme", action="store_true",
+                   help="rewrite an existing README's text above the index table from the current template")
 
     p = sub.add_parser("list", help="list issues")
     p.add_argument("--status", default="open", help="a status, or all (default: open)")
     p.add_argument("--priority")
     p.add_argument("--area")
+    p.add_argument("--reachable", action="append", metavar="NAME",
+                   help="a runs-on place this call can work in, besides repo and .backlog.toml's `reachable` "
+                        "(repeatable, or comma-separated)")
     p.add_argument("--json", action="store_true")
 
     sub.add_parser("next", help="print the next free number")
@@ -874,6 +1045,11 @@ def main(argv=None):
     p.add_argument("number")
     p.add_argument("--date", help="date for the Earlier resolution heading (default: today)")
 
+    p = sub.add_parser("hold", help="put an issue on hold so agents don't retry it")
+    p.add_argument("number")
+    p.add_argument("--reason", required=True, help="why it's on hold (one line)")
+    p.add_argument("--date", help="date the hold starts (default: today)")
+
     p = sub.add_parser("set", help="set frontmatter fields")
     p.add_argument("number")
     p.add_argument("pairs", nargs="+", metavar="key=value", help="`key=` with no value removes the key")
@@ -883,14 +1059,16 @@ def main(argv=None):
     p = sub.add_parser("check", help="validate issue files and the index")
     p.add_argument("--strict", action="store_true", help="treat warnings as errors")
 
+    sub.add_parser("run-checks", help="run the `checks` commands from .backlog.toml at the git root")
+
     p = sub.add_parser("install-hook", help="run `check` from .githooks/pre-commit")
     p.add_argument("--with-secret-scan", action="store_true", help="also run secret_scan.py --staged")
     p.add_argument("--force", action="store_true", help="replace a different scripts/backlog.py or secret_scan.py")
 
     args = ap.parse_args(argv)
     return {"init": cmd_init, "list": cmd_list, "next": cmd_next, "new": cmd_new, "close": cmd_close,
-            "reopen": cmd_reopen, "set": cmd_set, "index": cmd_index, "check": cmd_check,
-            "install-hook": cmd_install_hook}[args.cmd](args)
+            "reopen": cmd_reopen, "hold": cmd_hold, "set": cmd_set, "index": cmd_index, "check": cmd_check,
+            "run-checks": cmd_run_checks, "install-hook": cmd_install_hook}[args.cmd](args)
 
 
 if __name__ == "__main__":

@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """GitHub Issues as the backlog: the same JSON shape as `backlog.py list --json`.
 
-  backlog.py github list [--status open|closed|all] [--label NAME] [--repo OWNER/NAME] [--json]
-  backlog.py github from-json FILE [--status ...] [--label NAME] [--json]
+  backlog.py github list [--status open|closed|all] [--label NAME] [--reachable NAME] [--repo OWNER/NAME] [--json]
+  backlog.py github from-json FILE [--status ...] [--label NAME] [--reachable NAME] [--json]
 
 --label keeps only issues carrying that label. On a public repo anyone can open an issue, but only
 people with triage rights can label one, so an unattended run should work only labelled issues.
+--reachable NAME (repeatable, or comma-separated) adds a place this call can work in, besides "repo".
 
 `list` reads the issues through the gh CLI's REST calls (`gh api`; installed and logged in). Without gh,
 fetch the issues another way (e.g. the GitHub MCP tools), save them as a JSON list, and pass the file to
@@ -16,10 +17,15 @@ Fields read from each issue: number, title, body, state, labels, assignees, crea
 They map onto the file format like this:
 
   priority   a label P1, P2 or P3 (also "priority: P1", "priority/p1"), else a "Priority: P1" line in the body
+  runs_on    a label "runs-on:<place>" (any case), one per place
+  hold       "on-hold label" when the issue has an "on-hold" label, else null
   area       every other label, minus an "area:" prefix
   owner      the first assignee
   depends    "Depends on #12" or "Blocked by #12, #14" lines in the body
   sections   `## ` headings in the body: Done when, Needs <someone> (a checklist), and so on
+
+`unreachable` lists the runs_on places not reachable. An issue is `ready` when it's open, has a Done
+when, no open depends, no unticked Needs, no hold, and nothing unreachable.
 
 Standard library only.
 """
@@ -30,8 +36,12 @@ import re
 import subprocess
 import sys
 
+__version__ = "0.4.0"
+
 PRIORITIES = ("P1", "P2", "P3")
 PRIORITY_LABEL = re.compile(r"(?i)^(?:priority\s*[:/ -]\s*)?(p[123])$")
+RUNS_ON_LABEL = re.compile(r"(?i)^runs-on\s*:\s*(\S.*)$")
+HOLD_LABEL = "on-hold"
 DEPENDS_LINE = re.compile(r"(?im)^\W*(?:depends on|blocked by)\b(.*)$")
 DONE_RE = re.compile(r"^(done when|close when|acceptance( criteria)?)\b", re.I)
 STEP_RE = re.compile(r"\s*(?:[-*]|\d+[.)])\s")
@@ -63,16 +73,31 @@ def unticked_needs(sections):
     return names
 
 
-def normalize(raw):
+def reachable_places(values):
+    """"repo" plus each --reachable value (comma-separated lists too)."""
+    places = ["repo"]
+    for value in values or []:
+        places += [v.strip() for v in re.split(r"[,\s]+", value) if v.strip()]
+    return places
+
+
+def normalize(raw, reachable=("repo",)):
     """Map gh/GitHub API issue dicts onto the dicts `backlog.py list --json` prints."""
+    have = {r.lower() for r in reachable} | {"repo"}
     issues = []
     for it in raw:
         labels = [(l.get("name") if isinstance(l, dict) else str(l)) or "" for l in it.get("labels") or []]
-        priority, areas = "", []
+        priority, areas, runs_on, hold = "", [], [], None
         for name in labels:
             m = PRIORITY_LABEL.match(name.strip())
+            place = RUNS_ON_LABEL.match(name.strip())
             if m:
                 priority = priority or m.group(1).upper()
+            elif place:
+                if place.group(1).strip() not in runs_on:
+                    runs_on.append(place.group(1).strip())
+            elif name.strip().lower() == HOLD_LABEL:
+                hold = "on-hold label"
             else:
                 areas.append(re.sub(r"(?i)^area\s*[:/]\s*", "", name.strip()))
         body = it.get("body") or ""
@@ -101,13 +126,16 @@ def normalize(raw):
             "owner": (assignees[0].get("login") if isinstance(assignees[0], dict) else assignees[0]) if assignees else None,
             "sections": [name for name, _ in secs],
             "needs_human": unticked_needs(secs),
+            "runs_on": runs_on,
+            "unreachable": [r for r in runs_on if r.lower() not in have],
+            "hold": hold,
             "_has_done_when": any(DONE_RE.match(name) for name, _ in secs),
         })
     state = {i["number"]: i["status"] for i in issues}
     for i in issues:
         i["open_depends"] = [d for d in i["depends"] if state.get(d) == "open"]
         i["ready"] = (i["status"] == "open" and i.pop("_has_done_when") and not i["open_depends"]
-                      and not i["needs_human"])
+                      and not i["needs_human"] and not i["unreachable"] and not i["hold"])
         i.pop("_has_done_when", None)
     return issues
 
@@ -144,6 +172,10 @@ def show(issues, as_json):
             flags.append("blocked by " + ", ".join(i["open_depends"]))
         if i["needs_human"]:
             flags.append("needs a person")
+        if i["unreachable"]:
+            flags.append("runs on " + ", ".join(i["unreachable"]))
+        if i["hold"]:
+            flags.append("on hold: " + i["hold"])
         if i["status"] == "open" and not i["ready"] and not flags:
             flags.append("no 'Done when'")
         if not i["priority"]:
@@ -163,6 +195,8 @@ def main(argv=None):
             p.add_argument("--repo", help="OWNER/NAME (default: the current repo)")
         p.add_argument("--status", default="open", choices=("open", "closed", "all"))
         p.add_argument("--label", help="only issues with this label (an unattended run's trust gate)")
+        p.add_argument("--reachable", action="append", metavar="NAME",
+                       help="a runs-on place this call can work in, besides repo (repeatable, or comma-separated)")
         p.add_argument("--json", action="store_true")
     args = ap.parse_args(argv)
     if args.cmd == "list":
@@ -171,7 +205,7 @@ def main(argv=None):
         f = sys.stdin if args.file == "-" else open(args.file, encoding="utf-8")
         with f:
             raw = json.load(f)
-    show(select(normalize(raw), args.status, args.label), args.json)
+    show(select(normalize(raw, reachable_places(args.reachable)), args.status, args.label), args.json)
     return 0
 
 
