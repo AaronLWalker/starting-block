@@ -1,0 +1,6 @@
+schema_version: "1.1"
+name: run-holds-and-skips
+description: "Skip host-only work, put a person-only issue on hold instead of retrying it, finish the repo-only one."
+tags: [run, needs-bash]
+context:
+  scaffold_script: scaffold.sh
