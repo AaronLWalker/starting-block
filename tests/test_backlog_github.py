@@ -82,6 +82,17 @@ class NormalizeTest(unittest.TestCase):
         i = self.one(labels=["P1", "On-Hold", "bug"])
         self.assertEqual((i["hold"], i["area"], i["ready"]), ("on-hold label", ["bug"], False))
 
+    def test_observe_investigate_and_scope(self):
+        i = self.one(body=DONE + "\n## Observe\nNo reports after 2026-01-05.\n")
+        self.assertEqual((i["observe"], i["observe_due"], i["ready"]), ("2026-01-05", True, False))
+        i = self.one(body=DONE + "\n## Observe\nCheck after 2999-01-01.\n")
+        self.assertEqual((i["observe"], i["observe_due"]), ("2999-01-01", False))
+        i = self.one(body=DONE + "\n## Investigation\n- What changed?\n")
+        self.assertEqual((i["investigate"], i["ready"]), (True, False))
+        i = self.one(body=DONE + "\n## Scope\n- Paths: `src/a.py`, `tests/`\n")
+        self.assertEqual((i["scope"], i["observe"], i["investigate"], i["ready"]),
+                         (["src/a.py", "tests/"], None, False, True))
+
     def test_crlf_bodies(self):
         self.assertTrue(self.one(body=DONE.replace("\n", "\r\n"))["ready"])
 
@@ -92,6 +103,19 @@ class CommandTest(unittest.TestCase):
         self.assertEqual([i["number"] for i in gh.select(issues, "open", "agent-ok")], ["#1"])
         self.assertEqual(len(gh.select(issues, "open")), 3)
         self.assertEqual(issues[0]["labels"], ["P2", "Agent-OK"])
+
+    def test_label_needs_a_trusted_author(self):
+        raw = [issue(1, labels=["agent-ok"]), issue(2, labels=["agent-ok"]), issue(3, labels=["agent-ok"]),
+               issue(4, labels=["agent-ok"])]
+        raw[0].update(author={"login": "sam"}, authorAssociation="MEMBER")
+        raw[1].update(user={"login": "eve"}, author_association="NONE")
+        raw[2].update(user={"login": "cy"}, author_association="CONTRIBUTOR")
+        got = {i["number"]: i for i in gh.select(gh.normalize(raw), "open", "agent-ok")}
+        self.assertEqual((got["#1"]["ready"], got["#1"]["untrusted"], got["#1"]["author"]), (True, None, "sam"))
+        for n, who in (("#2", "eve (none)"), ("#3", "cy (contributor)"), ("#4", "an unknown author")):
+            self.assertFalse(got[n]["ready"], n)
+            self.assertIn(who, got[n]["untrusted"])
+        self.assertTrue(all(i["ready"] for i in gh.select(gh.normalize(raw), "open")))  # no label, no gate
 
     def test_from_json_sorts_and_filters(self):
         data = [issue(5, labels=["P3"]), issue(7, labels=["P1"]), issue(6, state="CLOSED", labels=["P1"]), issue(8)]

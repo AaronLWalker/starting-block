@@ -416,10 +416,39 @@ class BacklogTest(unittest.TestCase):
         self.assertEqual(warnings, ["001-a.md: closed but still on hold; clear it with `set 001 hold=`"])
         self.assertEqual(run("--dir", str(self.dir), "check")[0], 0)
 
+    def test_observe_investigate_and_scope(self):
+        self.write("001-a.md", tail="\n## Observe\nNo new reports after 2026-01-05.\n")
+        self.write("002-b.md", tail="\n## Observe\nWatch the error log for a week.\n")
+        self.write("003-c.md", tail="\n## Observe\nCheck after 2999-01-01.\n")
+        self.write("004-d.md", tail="\n## Investigate\n- Why does the cache miss on Mondays?\n")
+        self.write("005-e.md", tail="\n## Scope\n- Paths: `src/export.py`, `tests/`\n- Not: the CSV header\n")
+        run("--dir", str(self.dir), "index")
+        self.assertEqual(self.check(), ([], []))
+        data = self.listing()
+        self.assertEqual((data["001"]["observe"], data["001"]["observe_due"], data["001"]["ready"]),
+                         ("2026-01-05", True, False))
+        self.assertEqual((data["002"]["observe"], data["002"]["observe_due"]), ("", True))
+        self.assertEqual((data["003"]["observe"], data["003"]["observe_due"]), ("2999-01-01", False))
+        self.assertEqual((data["004"]["investigate"], data["004"]["ready"]), (True, False))
+        self.assertEqual((data["005"]["scope"], data["005"]["observe"], data["005"]["ready"]),
+                         (["src/export.py", "tests/"], None, True))
+        _, out = run("--dir", str(self.dir), "list")
+        self.assertIn("[observing, due]", out)
+        self.assertIn("[observing until 2999-01-01]", out)
+        self.assertIn("[investigating]", out)
+
+    def test_in_scope_patterns(self):
+        pats = ["src/export.py", "tests/", "docs", "*.md", "./lib/[ab].py"]
+        for path, want in [("src/export.py", True), ("src/export.pyc", False), ("tests/a/b.py", True),
+                           ("tests", False), ("docs/x.md", True), ("docsy/x", False), ("a/b/README.md", True),
+                           ("lib/a.py", True), ("lib/c.py", False), ("src/other.py", False)]:
+            self.assertEqual(backlog.in_scope(path, pats), want, path)
+
     def test_readme_template_describes_the_commands(self):
         text = (self.dir / "README.md").read_text()
         for word in ("sb-backlog new", "sb-backlog close", "sb-backlog list", "sb-backlog reopen",
-                     "sb-backlog hold", "runs-on", "hold:", "## Needs", "- [ ]"):
+                     "sb-backlog hold", "runs-on", "hold:", "## Needs", "- [ ]", "## Scope",
+                     "sb-backlog scope-check", "## Observe", "## Investigate"):
             self.assertIn(word, text)
 
     def test_init_refresh_readme_keeps_the_table_and_after(self):
@@ -521,6 +550,82 @@ class BacklogTest(unittest.TestCase):
 
     def test_install_hook_needs_git(self):
         self.assertIn("isn't inside a git repository", fails("--dir", str(self.dir), "install-hook"))
+
+
+class ScopeCheckTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.root = Path(self.tmp)
+        for args in (["init", "-q"], ["config", "user.email", "t@example.com"], ["config", "user.name", "T"],
+                     ["config", "gc.auto", "0"], ["config", "maintenance.auto", "false"]):
+            subprocess.run(["git", *args], cwd=self.root, check=True)
+        self.dir = self.root / "issues"
+        run("--dir", str(self.dir), "init")
+        (self.dir / "001-a.md").write_text(ISSUE.format(
+            status="open", priority="P2", title="A", extra="",
+            tail="\n## Scope\n- Paths: `src/`, `README.md`\n- Not: the header\n"))
+        (self.dir / "002-b.md").write_text(ISSUE.format(status="open", priority="P2", title="B", extra="", tail=""))
+        run("--dir", str(self.dir), "index")
+        self.commit("start")
+
+    def tearDown(self):
+        remove_tree(self.tmp)
+
+    def commit(self, message):
+        subprocess.run(["git", "add", "-A"], cwd=self.root, check=True)
+        subprocess.run(["git", "commit", "-qm", message], cwd=self.root, check=True)
+
+    def put(self, rel, text="x\n"):
+        path = self.root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+
+    def scope(self, *flags):
+        return run("--dir", str(self.dir), "scope-check", *flags)
+
+    def test_uncommitted_changes(self):
+        self.put("src/a.py")
+        self.put("README.md")
+        run("--dir", str(self.dir), "hold", "1", "--reason", "x")  # the backlog is always in scope
+        code, out = self.scope("1")
+        self.assertEqual(code, 0, out)
+        self.assertIn("In scope: 3 file(s)", out)
+        self.put("setup.py")
+        code, out = self.scope("1")
+        self.assertEqual(code, 1)
+        self.assertIn("outside the Scope of Issue 001", out)
+        self.assertIn("  setup.py", out)
+
+    def test_ranges_and_renames(self):
+        start = subprocess.run(["git", "rev-parse", "HEAD"], cwd=self.root, capture_output=True,
+                               text=True).stdout.strip()
+        self.put("src/a.py")
+        self.commit("in scope")
+        self.assertEqual(self.scope("1", "--range", start + "..HEAD")[0], 0)
+        self.assertEqual(self.scope("1", "--range", "HEAD")[0], 0)
+        subprocess.run(["git", "mv", "src/a.py", "lib.py"], cwd=self.root, check=True)
+        self.commit("move it out")
+        code, out = self.scope("1", "--range", start + "..HEAD")
+        self.assertEqual(code, 1)
+        self.assertIn("  lib.py", out)
+        self.assertEqual(self.scope("1", "--range", "HEAD~1")[0], 0)
+        self.assertIn("couldn't list", fails("--dir", str(self.dir), "scope-check", "1", "--range", "nope..HEAD"))
+
+    def test_no_scope_and_body_file(self):
+        with contextlib.redirect_stderr(io.StringIO()) as err:
+            self.assertEqual(self.scope("2")[0], 3)
+        self.assertIn("no `## Scope`", err.getvalue())
+        body = self.root.parent / (self.root.name + "-body.md")
+        try:
+            body.write_text("Priority: P2\n\n## Scope\n- **Paths:** `docs/`\n\n## Done when\n- ok\n")
+            self.put("docs/x.md")
+            self.assertEqual(self.scope("--body", str(body))[0], 0)
+            self.put("src/a.py")
+            self.assertEqual(self.scope("--body", str(body))[0], 1)
+            self.assertIn("not both", fails("--dir", str(self.dir), "scope-check", "1", "--body", str(body)))
+        finally:
+            body.unlink()
+        self.assertIn("issue number", fails("--dir", str(self.dir), "scope-check"))
 
 
 class InstallHookTest(unittest.TestCase):

@@ -5,7 +5,10 @@
   backlog.py github from-json FILE [--status ...] [--label NAME] [--reachable NAME] [--json]
 
 --label keeps only issues carrying that label. On a public repo anyone can open an issue, but only
-people with triage rights can label one, so an unattended run should work only labelled issues.
+people with triage rights can label one, so an unattended run should work only labelled issues. A label
+doesn't fix the text it approved, though: the issue's author can edit the body after it's applied. So
+with --label, an issue whose author isn't the repo's owner, a member or a collaborator (GitHub's
+author_association) is reported `untrusted` and isn't `ready`; a maintainer opens their own copy instead.
 --reachable NAME (repeatable, or comma-separated) adds a place this call can work in, besides "repo".
 
 `list` reads the issues through the gh CLI's REST calls (`gh api`; installed and logged in). Without gh,
@@ -13,7 +16,8 @@ fetch the issues another way (e.g. the GitHub MCP tools), save them as a JSON li
 `from-json` ("-" reads stdin). Both the REST names (created_at, html_url) and gh's GraphQL names
 (createdAt, url) are accepted.
 
-Fields read from each issue: number, title, body, state, labels, assignees, created/closed dates, url.
+Fields read from each issue: number, title, body, state, labels, assignees, created/closed dates, url,
+author and author_association.
 They map onto the file format like this:
 
   priority   a label P1, P2 or P3 (also "priority: P1", "priority/p1"), else a "Priority: P1" line in the body
@@ -23,20 +27,25 @@ They map onto the file format like this:
   owner      the first assignee
   depends    "Depends on #12" or "Blocked by #12, #14" lines in the body
   sections   `## ` headings in the body: Done when, Needs <someone> (a checklist), and so on
+  observe    an `## Observe` section: its "after YYYY-MM-DD" date, or "" (observe_due says whether it's due)
+  investigate  true with an `## Investigate` section (the cause isn't known yet)
+  scope      backticked paths on the `Paths:` line of a `## Scope` section
 
 `unreachable` lists the runs_on places not reachable. An issue is `ready` when it's open, has a Done
-when, no open depends, no unticked Needs, no hold, and nothing unreachable.
+when, no open depends, no unticked Needs, no hold, no Observe or Investigate section, nothing
+unreachable, and (with --label) a trusted author.
 
 Standard library only.
 """
 
 import argparse
+import datetime as dt
 import json
 import re
 import subprocess
 import sys
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 
 PRIORITIES = ("P1", "P2", "P3")
 PRIORITY_LABEL = re.compile(r"(?i)^(?:priority\s*[:/ -]\s*)?(p[123])$")
@@ -47,8 +56,12 @@ DONE_RE = re.compile(r"^(done when|close when|acceptance( criteria)?)\b", re.I)
 STEP_RE = re.compile(r"\s*(?:[-*]|\d+[.)])\s")
 TICKED_RE = re.compile(r"\s*(?:[-*]|\d+[.)])\s+\[[xX]\]")
 PRIORITY_LINE = re.compile(r"(?im)^\W*priority\W*\s*(p[123])\b")
+OBSERVE_AFTER_RE = re.compile(r"(?i)\bafter\s+(\d{4}-\d{2}-\d{2})\b")
+PATHS_LINE_RE = re.compile(r"(?i)^\W*paths\W*:")
+TRUSTED = ("OWNER", "MEMBER", "COLLABORATOR")
 GH_JQ = (".[] | select(.pull_request == null) | {number, title, body, state, created_at, closed_at, html_url,"
-         " labels: [.labels[].name], assignees: [.assignees[].login]}")
+         " author_association, user: {login: .user.login}, labels: [.labels[].name],"
+         " assignees: [.assignees[].login]}")
 
 
 def sections_of(body):
@@ -71,6 +84,42 @@ def unticked_needs(sections):
             if not steps or not all(TICKED_RE.match(l) for l in steps):
                 names.append(name)
     return names
+
+
+def section_lines(sections, prefix):
+    """Lines of every section whose heading starts with `prefix` (any case), or None if there's none."""
+    found = [lines for name, lines in sections if name.lower().startswith(prefix)]
+    return None if not found else [l for lines in found for l in lines]
+
+
+def observe_after(lines):
+    """For an `## Observe` section's lines: its "after YYYY-MM-DD" date, "" if it names none, None if no section."""
+    if lines is None:
+        return None
+    m = OBSERVE_AFTER_RE.search("\n".join(lines))
+    if not m:
+        return ""
+    try:
+        dt.date(*map(int, m.group(1).split("-")))
+    except ValueError:
+        return ""
+    return m.group(1)
+
+
+def scope_paths(lines):
+    paths = []
+    for line in lines or []:
+        if PATHS_LINE_RE.match(line):
+            paths += [p.strip() for p in re.findall(r"`([^`]+)`", line) if p.strip()]
+    return paths
+
+
+def author_of(it):
+    """(login, association) of an issue's author, from REST (user, author_association) or gh's GraphQL names."""
+    user = it.get("user") or it.get("author") or {}
+    login = user.get("login") if isinstance(user, dict) else str(user)
+    assoc = it.get("author_association") or it.get("authorAssociation") or ""
+    return login or "", assoc.upper()
 
 
 def reachable_places(values):
@@ -112,6 +161,8 @@ def normalize(raw, reachable=("repo",)):
         created = it.get("createdAt") or it.get("created_at") or ""
         closed = it.get("closedAt") or it.get("closed_at") or ""
         state = (it.get("state") or "").lower()
+        observe = observe_after(section_lines(secs, "observe"))
+        login, assoc = author_of(it)
         issues.append({
             "number": "#{}".format(it["number"]),
             "file": it.get("html_url") or it.get("url") or "",
@@ -129,20 +180,35 @@ def normalize(raw, reachable=("repo",)):
             "runs_on": runs_on,
             "unreachable": [r for r in runs_on if r.lower() not in have],
             "hold": hold,
+            "observe": observe,
+            "observe_due": observe is not None and (not observe or observe <= dt.date.today().isoformat()),
+            "investigate": section_lines(secs, "investigat") is not None,
+            "scope": scope_paths(section_lines(secs, "scope")),
+            "author": login or None,
+            "author_association": assoc or None,
+            "untrusted": None,
             "_has_done_when": any(DONE_RE.match(name) for name, _ in secs),
         })
     state = {i["number"]: i["status"] for i in issues}
     for i in issues:
         i["open_depends"] = [d for d in i["depends"] if state.get(d) == "open"]
         i["ready"] = (i["status"] == "open" and i.pop("_has_done_when") and not i["open_depends"]
-                      and not i["needs_human"] and not i["unreachable"] and not i["hold"])
+                      and not i["needs_human"] and not i["unreachable"] and not i["hold"]
+                      and i["observe"] is None and not i["investigate"])
         i.pop("_has_done_when", None)
     return issues
 
 
 def select(issues, status, label=None):
+    """Issues with `status` (and `label`), sorted. With a label, an untrusted author's issue isn't ready."""
     sel = [i for i in issues if (status == "all" or i["status"] == status)
            and (not label or label.lower() in (l.lower() for l in i["labels"]))]
+    if label:
+        for i in sel:
+            if i["author_association"] not in TRUSTED:
+                i["untrusted"] = "opened by {} ({}), who can edit it after it's labelled".format(
+                    i["author"] or "an unknown author", (i["author_association"] or "association unknown").lower())
+                i["ready"] = False
     sel.sort(key=lambda i: (PRIORITIES.index(i["priority"]) if i["priority"] in PRIORITIES else 9,
                             int(i["number"].lstrip("#"))))
     return sel
@@ -176,6 +242,12 @@ def show(issues, as_json):
             flags.append("runs on " + ", ".join(i["unreachable"]))
         if i["hold"]:
             flags.append("on hold: " + i["hold"])
+        if i["observe"] is not None:
+            flags.append("observing" + (", due" if i["observe_due"] else " until " + i["observe"]))
+        if i["investigate"]:
+            flags.append("investigating")
+        if i["untrusted"]:
+            flags.append("untrusted: " + i["untrusted"])
         if i["status"] == "open" and not i["ready"] and not flags:
             flags.append("no 'Done when'")
         if not i["priority"]:
