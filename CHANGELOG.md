@@ -33,6 +33,8 @@ retrospective stages:
   record that tracks an issue (a linked spec's checklist, a parent issue) in step when it closes.
 - **Other agents**: skills reference bundled files only through `${CLAUDE_PLUGIN_ROOT}`, and each has an
   `agents/openai.yaml`; the README shows the Codex setup.
+- **Cost caps**: the run template's `budget` defaults to $100 (was $20), since each issue now also gets two
+  review sessions; the Evals workflow takes a `max_cost` input, default $100 (was a fixed $15).
 
 ## 0.4.0 (2026-10-25)
 

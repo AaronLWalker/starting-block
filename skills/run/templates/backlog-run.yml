@@ -32,7 +32,7 @@ on:
         default: agent-ok
       budget:
         description: Most to spend on model calls in this run (USD)
-        default: "20"
+        default: "100"
       area:
         description: Only issues in this area (blank for all)
         default: ""
@@ -57,7 +57,7 @@ jobs:
       GH_TOKEN: ${{ secrets.BACKLOG_RUN_TOKEN || github.token }}
       MAX: ${{ github.event.inputs.max || '3' }}
       LABEL: ${{ github.event.inputs.label || 'agent-ok' }}
-      BUDGET: ${{ github.event.inputs.budget || '20' }}
+      BUDGET: ${{ github.event.inputs.budget || '100' }}
       AREA: ${{ github.event.inputs.area }}
       PLUGIN_REF: v0.5.0
     steps:
