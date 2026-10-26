@@ -1,0 +1,3 @@
+interface:
+  display_name: "Drift guard"
+  short_description: "Keep a generated file in sync with its source"

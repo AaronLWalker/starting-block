@@ -1,0 +1,3 @@
+interface:
+  display_name: "Review"
+  short_description: "Review a change against its issue, read-only"

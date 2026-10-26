@@ -1,0 +1,6 @@
+schema_version: "1.1"
+name: refine-splits-oversized
+description: "Split an issue with several independent outcomes into linked, one-session issues, each with a Scope and a Done when."
+tags: [refine, needs-bash]
+context:
+  scaffold_script: scaffold.sh

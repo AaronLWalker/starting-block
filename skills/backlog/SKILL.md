@@ -19,6 +19,7 @@ sb-backlog reopen 7                  # status open, drop closed:, Resolution bec
 sb-backlog set 7 priority=P1 owner=sam                  # frontmatter fields (`key=` removes one), index
 sb-backlog hold 7 --reason "needs the SMTP password"    # agents skip it until `set 7 hold=` clears it
 sb-backlog run-checks                # run the repo's checks listed in issues/.backlog.toml
+sb-backlog scope-check 7             # fail if uncommitted changes (or --range A..B) leave 7's Scope
 sb-backlog install-hook              # copy the scripts to scripts/, run check from .githooks/pre-commit
 sb-backlog init --refresh-readme     # rewrite issues/README.md's conventions text, keep the index
 sb-backlog index                     # rewrite the README index table from the files
@@ -40,7 +41,8 @@ one. Otherwise `sb-backlog init`, then show the user `issues/README.md`.
    covers it, update or reopen that one instead.
 2. **Check the facts.** Read the code, run read-only commands, and note what you saw with the date.
 3. **Create it**: `sb-backlog new --title "<what's wrong, in plain words>" --priority <P1|P2|P3>`, then
-   fill in Problem, Proposed fix and Done when. One issue per outcome.
+   fill in Problem, Proposed fix and Done when. One issue per outcome. If you couldn't find the cause,
+   don't guess a fix: list the open questions under `## Investigate`.
 4. `sb-backlog check` must pass.
 
 If the issue is vague or you couldn't pin down the cause, say so and suggest the `refine` skill.

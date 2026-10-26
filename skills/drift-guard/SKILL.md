@@ -24,7 +24,7 @@ Say what goes where before writing code. Check with the user if it changes how t
 ## 2. Write `build` and `check`
 
 One script, in the repo's main language. For a Python-friendly repo, start from
-`${CLAUDE_SKILL_DIR}/templates/check_manifest.py`: copy it to `scripts/`, then adapt the paths,
+`${CLAUDE_PLUGIN_ROOT}/skills/drift-guard/templates/check_manifest.py`: copy it to `scripts/`, then adapt the paths,
 `source_names()` and `render_row()`. Either way:
 
 - **`build`** writes the generated files. Same inputs, byte-identical output.

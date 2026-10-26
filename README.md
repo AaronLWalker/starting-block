@@ -1,8 +1,8 @@
 # Starting Block
 
 A Claude Code plugin for working from an issue backlog. Claude plans what's next, refines
-an issue until it's clear what "done" means, then executes it: fix, verify, commit, and close the issue
-with the commit that fixed it.
+an issue until it's clear what "done" means and what it may touch, then executes it: fix, verify, commit,
+have a fresh session review the change against the issue, and close the issue with the commit that fixed it.
 
 Issues are plain Markdown files (`issues/001-login-fails-after-reset.md`), versioned with the code and
 needing no tracker account, or, if your project already uses them, GitHub Issues.
@@ -39,12 +39,14 @@ CLI logged in, or GitHub tools in Claude Code), and closes them through `Fixes #
 3. **Make it ready** (only if it's vague): *"Refine issue 1."* Claude checks each claim against the code and
    tightens the fix and the Done when.
 4. **Do it.** *"Work on issue 1."* Claude reproduces the bug, makes the fix, runs the Done when checks and
-   your tests, commits, and closes the issue citing the commit.
+   your tests, and commits. Two fresh subagents review the commit against the issue (one for what it asked,
+   one for your repo's rules); once both pass, Claude closes the issue citing the commit.
 5. **Next.** *"What should I work on next?"* Claude triages the backlog and names the issues that are
    ready.
 
 Claude asks before running commands that change things outside the repo, and never pushes unless you ask.
-Only *execute* commits on its own; the other skills leave their changes for you to review.
+Only *execute* commits on its own; the other skills leave their changes for you to review. A label, a plan
+or a passing review is never permission on its own: that comes from what you ask for.
 
 ## Skills
 
@@ -53,8 +55,10 @@ Only *execute* commits on its own; the other skills leave their changes for you 
 | `/starting-block:backlog` | Start the backlog; log, update and list issues | "log this as an issue", "what's open?" |
 | `/starting-block:plan` | Triage everything: done, stale, blocked, waiting on you, what's next | "what should I work on next?" |
 | `/starting-block:refine` | Make one issue ready: check its facts, fix plan, Done when | "refine issue 14" |
-| `/starting-block:execute` | Take a ready issue to done: fix, verify, commit, close | "work on issue 12" |
+| `/starting-block:execute` | Take a ready issue to done: fix, verify, commit, review, close | "work on issue 12" |
+| `/starting-block:review` | Review a change against its issue, read-only: requirements and repo rules | "review my last commit against issue 12" |
 | `/starting-block:run` | Work through every ready issue, one after another, unattended if you like | "work through the backlog" |
+| `/starting-block:retro` | Look back at a session or run and propose checks and instructions that stop repeats | "do a retro on last night's run" |
 
 **Also included**, for keeping a repo safe to share:
 
@@ -82,6 +86,10 @@ What's wrong, with evidence: file and line, the error, when it was seen.
 ## Proposed fix
 Concrete steps.
 
+## Scope
+- Paths: `src/auth/reset.py`, `tests/test_auth.py`
+- Not: changing the login flow
+
 ## Done when
 - `pytest tests/test_auth.py -k reset` passes, including a new test for this.
 ```
@@ -90,14 +98,22 @@ Concrete steps.
 - **Done when**: observable checks that prove the issue is fixed.
 - **Needs \<someone\>**: a checklist of steps only a person can do (credentials, admin rights, a decision).
   Claude stops there until every box is ticked.
-- **Ready**: has a Done when, nothing blocking it, and nothing waiting on a person.
+- **Scope**: the paths a fix may change, and what it mustn't do. `sb-backlog scope-check` fails on a change
+  outside the paths, and execute stops rather than widen it.
+- **Investigate**: the cause isn't known yet; the section lists the questions. Refine answers them first.
+- **Observe**: the fix shipped and only a passive check is left (`after YYYY-MM-DD`). Plan does the check
+  when it's due.
+- **Ready**: has a Done when, nothing blocking it, nothing waiting on a person, and isn't waiting to be
+  investigated or observed.
 
 Full spec: [issue-format.md](skills/backlog/references/issue-format.md).
 How the skills commit, close issues and handle teams and pull requests: [workflow.md](skills/backlog/references/workflow.md).
 
 ## Running the backlog unattended
 
-`/starting-block:run` works the ready issues in order. Each issue gets a fresh subagent running `execute`.
+`/starting-block:run` works the ready issues in order. Each issue gets a fresh subagent running `execute`,
+then two more running `review` on its commit; only a change both pass is closed. A change review blocks
+gets one more attempt, then the issue goes on hold with the findings.
 The run stops after `--max N` issues attempted (default 5), when nothing ready is left, after two failures
 in a row, or at once if your checks are already failing or its own setup breaks (a denied tool, a refused
 push). It never does a person's steps, never pushes to your default branch, and never merges.
@@ -122,7 +138,9 @@ with `runs-on: host` and runs skip it from the start.
   repo; for an ops repo, it will only pick the repo-only issues.
 - **GitHub Issues on a public repo:** anyone can open an issue, and its text becomes Claude's instructions.
   The run only works issues carrying a label you apply (`--label agent-ok`); only people with triage
-  rights can add labels.
+  rights can add labels. An issue's author can still edit it after you label it, so the run also skips
+  labelled issues opened by anyone but the repo's owner, members and collaborators: to have one worked,
+  open your own issue with the text you approved.
 
 ## Teams, pull requests and monorepos
 
@@ -132,6 +150,24 @@ with `runs-on: host` and runs skip it from the start.
   conflict, take either side and run `sb-backlog index`.
 - Add `owner: <name>` when you pick an issue up.
 - Monorepo: one backlog at the root with `area:` per package, or one per package (`--dir packages/api/issues`).
+
+## Using it from Codex or another agent
+
+The skills are plain [Agent Skills](https://agentskills.io) folders, so other agents can read them. Clone
+the plugin, link its skills where your agent looks for them (Codex: `.agents/skills/` in the repo, or
+`~/.agents/skills/`), and give the skills the two things Claude Code's plugin loader would:
+
+```bash
+git clone https://github.com/AaronLWalker/starting-block ~/starting-block
+mkdir -p ~/.agents/skills
+for s in ~/starting-block/skills/*/; do ln -s "$s" ~/.agents/skills/; done
+export CLAUDE_PLUGIN_ROOT=~/starting-block   # the skills name bundled files from here
+export PATH="$CLAUDE_PLUGIN_ROOT/bin:$PATH"  # sb-backlog and sb-secret-scan
+```
+
+Each skill's `agents/openai.yaml` carries a display name for Codex's skill list. The repo's own
+instructions can live in `AGENTS.md`; the skills read it first, and edit it rather than a `CLAUDE.md` that
+points at it.
 
 ## Using the scripts without Claude
 
@@ -156,5 +192,7 @@ python scripts/secret_scan.py --history    # fail if anything looks like a commi
 Extracted from the workflows of a self-hosted media-server repo that has run its work this way since
 2026-09: an in-repo backlog with evidence-based issues, closing with the fixing commit, stripping secrets
 before going public, and a generated page guarded by a check and a pre-commit hook.
+Review, Scope, Observe and Investigate, sizing and the retro come from a second project that runs its
+backlog through separate planning, independent review and retrospective stages.
 
 Contributing: [CONTRIBUTING.md](CONTRIBUTING.md). License: [MIT](LICENSE).

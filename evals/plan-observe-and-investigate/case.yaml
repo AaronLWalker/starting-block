@@ -1,0 +1,6 @@
+schema_version: "1.1"
+name: plan-observe-and-investigate
+description: "Tell apart an issue that already shipped, one awaiting a passive check that's now due, one needing investigation, and the one that's ready."
+tags: [plan]
+context:
+  scaffold_script: scaffold.sh

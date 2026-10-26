@@ -1,0 +1,6 @@
+schema_version: "1.1"
+name: execute-stops-outside-scope
+description: "Stop, rather than widen the change, when the fix needs a file the issue's Scope doesn't list."
+tags: [execute, needs-bash]
+context:
+  scaffold_script: scaffold.sh
