@@ -1,0 +1,3 @@
+interface:
+  display_name: "Refine"
+  short_description: "Make one issue ready: facts, scope, Done when"

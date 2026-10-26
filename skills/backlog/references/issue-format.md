@@ -58,9 +58,12 @@ A `# Title` line, then the sections that apply, in this order:
 |---|---|---|
 | `## Problem` | always | What's wrong and the evidence: file and line, the error text, the command and its output, when it was seen. |
 | `## Proposed fix` | always | Concrete steps naming the files or settings. With several options, number them and recommend one. |
+| `## Investigate` | cause unknown | The questions whose answers decide the fix, in place of guessing one. The issue isn't ready until `refine` answers them. |
+| `## Scope` | ready issues | `- Paths:` the backticked files, directories (`tests/`) or globs (`docs/*.md`) the fix may change; `- Not:` what it must not do. `sb-backlog scope-check` enforces the paths. |
 | `## Needs <someone>` | if any | Steps only a person can take, as a checklist (`- [ ] ...`). Agents stop here until every box is ticked (`- [x]`). |
 | `## Done when` | always | Observable checks: a command and what it prints, a test that passes, a page that loads. Not "it works". |
 | `## Allowed commands` | if any | Exact commands that change a running system (a restart, a deploy) which an unattended run may use for this issue. Nothing else of that kind runs unattended. |
+| `## Observe` | fix shipped, effect not yet visible | What to look at and where, and `after YYYY-MM-DD`. Only a passive check is left; the issue isn't ready to execute. |
 | `## Verify` | risky changes | How to confirm the change in the running system. |
 | `## Roll back` | risky changes | The exact steps to undo it. |
 | `## Progress (YYYY-MM-DD)` | multi-session work | Dated facts: what's done, what was found, what's left. |
@@ -69,6 +72,9 @@ A `# Title` line, then the sections that apply, in this order:
 `Needs` steps are anything that takes the person's account, money, credentials, physical access, admin
 rights (`sudo`, a production console), their own devices, a machine or service the agent's session can't
 reach, or a decision that's theirs to make.
+
+`sb-backlog list --json` reports each section it acts on: `needs_human`, `investigate` (true or false),
+`observe` (the date, `""` without one, or `null` without the section), `observe_due`, and `scope` (the paths).
 
 ## Writing it
 
@@ -100,6 +106,10 @@ token secret but leaves the old session cookie, and `login()` checks that cookie
 ## Proposed fix
 - Clear the session cookie in `reset_password()`.
 - Add a test: reset, then log in with the new password.
+
+## Scope
+- Paths: `src/auth/reset.py`, `tests/test_auth.py`
+- Not: changing how `login()` orders its checks
 
 ## Done when
 - `pytest tests/test_auth.py -k reset` passes, including the new test.

@@ -1,0 +1,3 @@
+interface:
+  display_name: "Secrets audit"
+  short_description: "Find committed secrets and fix them safely"

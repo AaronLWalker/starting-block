@@ -13,6 +13,8 @@
   index                rewrite the README's index table from the issue files
   check                fail if any issue file or the index is malformed or out of step
   run-checks           run the `checks` commands from .backlog.toml at the git root; exit 1 if any fail
+  scope-check N        fail if a change touches paths outside issue N's `## Scope` (--range A..B, else the
+                       uncommitted changes; --body FILE checks against a Markdown body instead, e.g. GitHub's)
   install-hook         copy this script into the repo's scripts/ and run `check` from
                        .githooks/pre-commit (--with-secret-scan adds secret_scan.py --staged)
   github list          the same listing from GitHub Issues instead (see backlog_github.py)
@@ -33,13 +35,17 @@ Each issue is `NNN-short-slug.md` with a frontmatter block, one `key: value` per
 
   # Title in plain English
 
-followed by sections such as Problem, Proposed fix, Done when, Progress, Resolution.
+followed by sections such as Problem, Proposed fix, Scope, Done when, Progress, Resolution.
 A section whose heading starts with "Needs" (e.g. "## Needs the account holder")
 holds steps only a person can do; it stops blocking once every step is ticked (`- [x]`).
+`## Observe` means the fix has shipped and only a passive check is left ("after YYYY-MM-DD"
+says when it's due); `## Investigate` means the cause is still unknown, so the work is finding it.
+`## Scope` lists the paths a fix may change, as backticked items on a `Paths:` line.
 
 An issue is ready (`list --json`) when it's open, has a Done when, no open depends, no
-unticked Needs, no hold, and every runs-on place is reachable: "repo", the config's
-`reachable`, or a `list --reachable NAME` (for a session running somewhere else, e.g. the host).
+unticked Needs, no hold, no Observe or Investigate section, and every runs-on place is reachable:
+"repo", the config's `reachable`, or a `list --reachable NAME` (for a session running somewhere
+else, e.g. the host).
 
 An optional `.backlog.toml` in the backlog directory changes the vocabulary
 (read with tomllib, so it needs Python 3.11+):
@@ -59,6 +65,7 @@ Standard library only. The backlog directory is --dir, else $BACKLOG_DIR, else
 
 import argparse
 import datetime as dt
+import fnmatch
 import json
 import os
 import re
@@ -72,7 +79,7 @@ try:
 except ImportError:  # Python 3.9 and 3.10
     tomllib = None
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 
 STATUSES = ("open", "closed")
 PRIORITIES = ("P1", "P2", "P3")
@@ -85,6 +92,8 @@ KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*$")
 WORD_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
 TABLE_HEAD = "| # | Priority | Issue |"
 TABLE_RULE = "|---|---|---|"
+OBSERVE_AFTER_RE = re.compile(r"(?i)\bafter\s+(\d{4}-\d{2}-\d{2})\b")
+PATHS_LINE_RE = re.compile(r"(?i)^\W*paths\W*:")
 HOOK_START = "# >>> starting-block backlog checks"
 HOOK_END = "# <<< starting-block backlog checks"
 
@@ -111,6 +120,11 @@ setting, a purchase, a credential, a decision). Agents stop there until every bo
 `runs-on: host` in the frontmatter says where the work must happen, so agents that can't reach it skip the
 issue. `hold: YYYY-MM-DD <reason>` means an agent stopped on the issue; it isn't retried until someone
 clears the hold.
+
+`## Scope` lists the paths a fix may change (``- Paths: `src/export.py`, `tests/` ``) and what it must not do;
+`sb-backlog scope-check N` fails on a change outside them. `## Observe` means the fix shipped and only a
+passive check is left (`after YYYY-MM-DD` says when); `## Investigate` means the cause isn't known yet, so
+the work is finding it. Neither is ready to execute.
 
 {head}
 {rule}
@@ -199,9 +213,27 @@ class Issue:
     def has_done_when(self):
         return any(self.done_re.match(s) for s in self.sections)
 
+    def section_lines(self, prefix):
+        """Lines of every section whose heading starts with `prefix` (any case), or None if there's none."""
+        names = [n for n in self.sections if n.lower().startswith(prefix)]
+        return None if not names else [l for n in names for l in self.section_text[n]]
+
+    @property
+    def observe(self):
+        return observe_after(self.section_lines("observe"))
+
+    @property
+    def investigate(self):
+        return self.section_lines("investigat") is not None
+
+    @property
+    def scope(self):
+        return scope_paths(self.section_lines("scope"))
+
     def to_dict(self, by_number, reachable=("repo",)):
         open_deps = [d for d in self.depends if d in by_number and by_number[d].status != "closed"]
         unreachable = unreachable_places(self.runs_on, reachable)
+        observe = self.observe
         return {
             "number": self.number,
             "file": self.file,
@@ -218,8 +250,12 @@ class Issue:
             "runs_on": self.runs_on,
             "unreachable": unreachable,
             "hold": self.hold,
+            "observe": observe,
+            "observe_due": observe is not None and (not observe or observe <= today()),
+            "investigate": self.investigate,
+            "scope": self.scope,
             "ready": (self.status == "open" and self.has_done_when and not open_deps and not self.needs
-                      and not unreachable and not self.hold),
+                      and not unreachable and not self.hold and observe is None and not self.investigate),
         }
 
 
@@ -231,6 +267,43 @@ def unreachable_places(runs_on, reachable):
     """The `runs_on` places not in `reachable` (any case); "repo" is always reachable."""
     have = {r.lower() for r in reachable} | {"repo"}
     return [r for r in runs_on if r.lower() not in have]
+
+
+def observe_after(lines):
+    """For an `## Observe` section's lines: its "after YYYY-MM-DD" date, "" if it names none, None if no section."""
+    if lines is None:
+        return None
+    m = OBSERVE_AFTER_RE.search("\n".join(lines))
+    return m.group(1) if m and valid_date(m.group(1)) else ""
+
+
+def scope_paths(lines):
+    """The backticked paths on the `Paths:` lines of a `## Scope` section (empty without one)."""
+    paths = []
+    for line in lines or []:
+        if PATHS_LINE_RE.match(line):
+            paths += [p.strip() for p in re.findall(r"`([^`]+)`", line) if p.strip()]
+    return paths
+
+
+def in_scope(path, patterns):
+    """True when `path` (relative to the git root, `/`-separated) matches one of the Scope `patterns`.
+
+    `dir/` matches everything under dir; a pattern with `*`, `?` or `[` is a glob in which `*` also
+    crosses `/`; anything else matches that file, or everything under it if it's a directory."""
+    for pattern in patterns:
+        pat = pattern.replace("\\", "/")
+        while pat.startswith("./"):
+            pat = pat[2:]
+        if pat.endswith("/"):
+            if path.startswith(pat):
+                return True
+        elif any(c in pat for c in "*?["):
+            if fnmatch.fnmatchcase(path, pat):
+                return True
+        elif path == pat or path.startswith(pat + "/"):
+            return True
+    return False
 
 
 def hold_reason(hold):
@@ -563,6 +636,10 @@ def cmd_list(args):
             flags.append("runs on " + ", ".join(info["unreachable"]))
         if info["hold"]:
             flags.append("on hold: " + hold_reason(info["hold"]))
+        if info["observe"] is not None:
+            flags.append("observing" + (", due" if info["observe_due"] else " until " + info["observe"]))
+        if info["investigate"]:
+            flags.append("investigating")
         if i.status == "open" and not i.has_done_when:
             flags.append("no 'Done when'")
         print("{}  {:2}  {:6}  {}{}".format(i.number, i.priority, i.status, i.title,
@@ -883,6 +960,70 @@ def cmd_run_checks(args):
     return 1 if failed else 0
 
 
+def changed_paths(root, rng):
+    """Paths (relative to the git root) changed in `rng` (`A..B`, `A...B` or one commit), or else
+    uncommitted: staged, unstaged and untracked. Renames count as both paths. None if git fails."""
+    base = ["-c", "core.quotepath=off"]
+    if rng:
+        spec = [rng] if ".." in rng else [rng + "^!"]  # one commit: just its own changes
+        out = git(base + ["diff", "--name-only", "--no-renames", "-z"] + spec + ["--"], root)
+        return None if out is None else [p for p in out.split("\0") if p]
+    tracked = git(base + ["diff", "--name-only", "--no-renames", "-z", "HEAD", "--"], root)
+    untracked = git(base + ["ls-files", "--others", "--exclude-standard", "-z"], root)
+    if tracked is None or untracked is None:
+        return None
+    return sorted({p for p in (tracked + "\0" + untracked).split("\0") if p})
+
+
+def cmd_scope_check(args):
+    d = backlog_dir(args.dir)
+    if args.body:
+        if args.number:
+            sys.exit("Pass an issue number or --body, not both.")
+        try:
+            text = Path(args.body).read_text(encoding="utf-8")
+        except OSError as e:
+            sys.exit("Can't read {}: {}".format(args.body, e))
+        name, lines, current = args.body, None, None
+        for line in text.replace("\r\n", "\n").splitlines():
+            if line.startswith("## "):
+                current = line[3:].strip().lower().startswith("scope")
+                if current and lines is None:
+                    lines = []
+            elif current:
+                lines.append(line)
+        patterns = scope_paths(lines)
+    else:
+        if not args.number:
+            sys.exit("Pass an issue number, or --body FILE.")
+        require_dir(d)
+        issues, _ = load(d)
+        issue = find_issue(d, issues, args.number)
+        name, patterns = "Issue " + issue.number, issue.scope
+    if not patterns:
+        print("{} has no `## Scope` with a `Paths:` line; nothing to check against.".format(name), file=sys.stderr)
+        return 3
+    top = git(["rev-parse", "--show-toplevel"], d if d.is_dir() else None)
+    if not top:
+        sys.exit("scope-check needs a git repository.")
+    root = Path(top)
+    paths = changed_paths(root, args.range)
+    if paths is None:
+        sys.exit("git couldn't list the changes{}.".format(" in " + args.range if args.range else ""))
+    rel = (git(["rev-parse", "--show-prefix"], d) or "").strip("/") if d.is_dir() else ""
+    allowed = list(patterns) + ([rel + "/"] if rel else [])  # the backlog itself: closing, index
+    outside = [p for p in paths if not in_scope(p, allowed)]
+    what = args.range or "uncommitted changes"
+    if outside:
+        print("{} file(s) in {} are outside the Scope of {} ({}):".format(
+            len(outside), what, name, ", ".join(patterns)))
+        for p in outside:
+            print("  " + p)
+        return 1
+    print("In scope: {} file(s) in {} match {}.".format(len(paths), what, ", ".join(patterns)))
+    return 0
+
+
 def hook_block(rel, secret_scan):
     """The pre-commit lines install-hook manages, between its two marker comments."""
     lines = [
@@ -1061,6 +1202,11 @@ def main(argv=None):
 
     sub.add_parser("run-checks", help="run the `checks` commands from .backlog.toml at the git root")
 
+    p = sub.add_parser("scope-check", help="fail if a change touches paths outside an issue's `## Scope`")
+    p.add_argument("number", nargs="?")
+    p.add_argument("--range", help="commits to check: A..B, A...B or one commit (default: uncommitted changes)")
+    p.add_argument("--body", metavar="FILE", help="check against this Markdown body (e.g. a GitHub issue's)")
+
     p = sub.add_parser("install-hook", help="run `check` from .githooks/pre-commit")
     p.add_argument("--with-secret-scan", action="store_true", help="also run secret_scan.py --staged")
     p.add_argument("--force", action="store_true", help="replace a different scripts/backlog.py or secret_scan.py")
@@ -1068,7 +1214,8 @@ def main(argv=None):
     args = ap.parse_args(argv)
     return {"init": cmd_init, "list": cmd_list, "next": cmd_next, "new": cmd_new, "close": cmd_close,
             "reopen": cmd_reopen, "hold": cmd_hold, "set": cmd_set, "index": cmd_index, "check": cmd_check,
-            "run-checks": cmd_run_checks, "install-hook": cmd_install_hook}[args.cmd](args)
+            "run-checks": cmd_run_checks, "scope-check": cmd_scope_check,
+            "install-hook": cmd_install_hook}[args.cmd](args)
 
 
 if __name__ == "__main__":

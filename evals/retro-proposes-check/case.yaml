@@ -1,0 +1,6 @@
+schema_version: "1.1"
+name: retro-proposes-check
+description: "From a run's evidence, find the repeated escape, notice the existing check isn't wired in, and propose wiring it, changing nothing."
+tags: [retro]
+context:
+  scaffold_script: scaffold.sh

@@ -57,7 +57,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 
 RULES = [
     ("private-key", re.compile(r"-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP |ENCRYPTED )?PRIVATE KEY")),

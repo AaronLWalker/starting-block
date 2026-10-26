@@ -1,0 +1,3 @@
+interface:
+  display_name: "Execute"
+  short_description: "Fix, verify, review and close one issue"

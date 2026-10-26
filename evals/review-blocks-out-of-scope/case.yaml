@@ -1,0 +1,6 @@
+schema_version: "1.1"
+name: review-blocks-out-of-scope
+description: "Block a change that fixes the issue but also edits a file outside its Scope and skips a test."
+tags: [review, needs-bash]
+context:
+  scaffold_script: scaffold.sh

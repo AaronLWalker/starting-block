@@ -8,8 +8,10 @@
 #    Contents, Pull requests and Issues read/write on this repo. Without it, also turn on Settings →
 #    Actions → General → "Allow GitHub Actions to create and approve pull requests".
 # 3. Backlog in GitHub Issues: create a label (default `agent-ok`) and put it on the issues the run may
-#    work. Only people with triage rights can label, so issue text from strangers is never acted on.
-#    Backlog in issues/ files: the label is ignored; those files arrive through reviewed commits.
+#    work. Only people with triage rights can label, and the run also skips labelled issues whose author
+#    isn't an owner, member or collaborator (they could edit the text after it was labelled), so issue
+#    text from strangers is never acted on. Backlog in issues/ files: the label is ignored; those files
+#    arrive through reviewed commits.
 # 4. Allowed tools: the run may use any shell command, on a throwaway runner that holds only this repo's
 #    token. Narrow --allowedTools to your test and build commands if you prefer.
 # 5. The plugin is pinned to PLUGIN_REF (a release tag). Bump it deliberately to take a new version.
@@ -30,7 +32,7 @@ on:
         default: agent-ok
       budget:
         description: Most to spend on model calls in this run (USD)
-        default: "20"
+        default: "100"
       area:
         description: Only issues in this area (blank for all)
         default: ""
@@ -55,9 +57,9 @@ jobs:
       GH_TOKEN: ${{ secrets.BACKLOG_RUN_TOKEN || github.token }}
       MAX: ${{ github.event.inputs.max || '3' }}
       LABEL: ${{ github.event.inputs.label || 'agent-ok' }}
-      BUDGET: ${{ github.event.inputs.budget || '20' }}
+      BUDGET: ${{ github.event.inputs.budget || '100' }}
       AREA: ${{ github.event.inputs.area }}
-      PLUGIN_REF: v0.4.0
+      PLUGIN_REF: v0.5.0
     steps:
       - uses: actions/checkout@v4
         with:

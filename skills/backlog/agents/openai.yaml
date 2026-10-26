@@ -1,0 +1,3 @@
+interface:
+  display_name: "Backlog"
+  short_description: "Set up, log, update and list issues"

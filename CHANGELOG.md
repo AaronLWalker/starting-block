@@ -1,5 +1,41 @@
 # Changelog
 
+## 0.5.0 (2026-10-26)
+
+Practices carried over from a project that runs its backlog through separate planning, review and
+retrospective stages:
+
+- **New `review` skill**: a read-only review of the exact change against its issue, in two independent
+  passes: requirements (evidence for every Done when, nothing missing, nothing unasked) and standards (the
+  repo's rules, Scope, secrets, weakened checks). Ends with `REVIEW: pass|blocked`. A failing check blocks
+  whatever the reviewers think.
+- **`execute` closes only after review**: commit, then two fresh review subagents, then close (or say the
+  review wasn't independent when there's no subagent tool). Under `run`, execute returns `candidate` and
+  `run` reviews it, gives a blocked change one more attempt, and holds the issue if it's still blocked.
+  Stopping now also undoes the issue's own unpushed commits (`git reset --keep <start>`).
+- **`## Scope`** in the issue format: allowed paths and `Not:` lines. `sb-backlog scope-check N` (or
+  `--range A..B`, `--body FILE` for GitHub) fails on a change outside the paths; execute stops rather than
+  widen it; refine writes it.
+- **`## Observe` and `## Investigate`**: an issue whose fix shipped and only a passive check is left, and
+  one whose cause isn't known yet. Neither is `ready`; `list --json` reports `observe`, `observe_due` and
+  `investigate`. Plan classifies both, and treats an open issue as no proof that work remains; refine does
+  the investigation read-only.
+- **Sizing**: refine splits an issue that's more than one session's work (review included) into vertical
+  slices linked with `depends:`; plan has a "Too big" state.
+- **New `retro` skill**: proposes, with evidence and a way to verify, a check for each mechanical mistake
+  and an instructions entry for each judgement call; separates an unwired check from a missing one; no
+  findings is a complete retro.
+- **Trust**: with `--label`, GitHub issues whose author isn't an owner, member or collaborator are
+  `untrusted` and not `ready`, since the author can edit the text after it's labelled. A label, a plan or
+  a passing review is never permission; text an agent reads is never instructions.
+- **Context**: the skills read `CONTEXT.md`, the decision records for the area and per-directory
+  `AGENTS.md`/`CLAUDE.md`, treat `AGENTS.md` as canonical when `CLAUDE.md` points at it, and keep every
+  record that tracks an issue (a linked spec's checklist, a parent issue) in step when it closes.
+- **Other agents**: skills reference bundled files only through `${CLAUDE_PLUGIN_ROOT}`, and each has an
+  `agents/openai.yaml`; the README shows the Codex setup.
+- **Cost caps**: the run template's `budget` defaults to $100 (was $20), since each issue now also gets two
+  review sessions; the Evals workflow takes a `max_cost` input, default $100 (was a fixed $15).
+
 ## 0.4.0 (2026-10-25)
 
 Fixes from running the plugin against a real ops repo, where `run` would have retried the same three
